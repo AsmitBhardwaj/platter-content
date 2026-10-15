@@ -2,7 +2,7 @@
 
 A polished, local-first Streamlit workspace that turns a cooking video into selected portrait frames or a complete recipe slideshow. **Frame Finder** is the default workflow and needs only a video URL and approximate slide count. The existing recipe-step workflow remains available as an optional mode, with its established 1080×1440 slide design unchanged.
 
-YouTube downloads use yt-dlp and are saved only inside the selected project's private local data directory. The app downloads video with audio (capped at 1080p, with fallbacks for videos that lack separate MP4/M4A streams) and surfaces the real yt-dlp error if a download fails. Uploading a file is the default and most reliable option. Downloaded media, thumbnails, uploaded media, saved projects, extracted frames, exports, cookies, and credentials are excluded from Git. The app does not use account cookies and does not include automatic captions or LLM integration.
+YouTube downloads use yt-dlp and are saved only inside the selected project's private local data directory. The app downloads video with audio (capped at 1080p, with fallbacks for videos that lack separate MP4/M4A streams) and surfaces the real yt-dlp error if a download fails. Uploading a file is the default and most reliable option. Downloaded media, thumbnails, uploaded media, saved projects, extracted frames, exports, cookies, and credentials are excluded from Git. The app does not use account cookies. An optional OpenAI vision pass (below) drafts captions; it never runs without an API key.
 
 ## Requirements
 
@@ -99,3 +99,13 @@ Each saved project contains `project.json`, its temporary downloaded or uploaded
 ## Analysis settings and fallbacks
 
 Scene threshold, minimum sharpness, duplicate sensitivity (`max_hash_distance`) and the fallback interval are adjustable under **Advanced analysis settings** in the Find frames stage, or via an optional `analysis_settings.json` in the project root (keys: `scene_threshold`, `min_sharpness`, `max_hash_distance`, `min_brightness`, `max_brightness`, `min_scene_frames`, `fallback_interval`). When scene detection yields fewer than `min_scene_frames` (6) frames, Frame Finder also samples every `fallback_interval` seconds (1.5) and keeps the sharpest frame from a burst around each sample. If every frame is rejected, thresholds are relaxed automatically (recorded in `manifest.json`) instead of returning an empty gallery.
+
+## AI caption pass (optional)
+
+Copy `.env.example` to `.env` and set `OPENAI_API_KEY` (`.env` is gitignored). In the **Find frames** stage, tick **Write captions with AI** (optionally paste steps) before running extraction. After Frame Finder extraction (scene detection with interval fallback), one call to `gpt-5.4-mini` receives up to 40 candidate frames downscaled to 512px, each labeled with its index and timestamp, plus the video title, the extraction mode (scene vs interval-fallback) and any pasted steps. It returns structured JSON (`dish_name`, ordered `{frame_index, caption}`), and the editor opens pre-filled with those slides. Token counts are printed to the console (`[ai-pass] ...`). If there is no key or the call fails, the error is shown and manual mode continues.
+
+One-off command-line run (extraction plus AI pass, nothing saved):
+
+```bash
+python -m recipe_slides.ai_cli path/to/video.mp4 --count 10
+```

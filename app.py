@@ -6,6 +6,13 @@ from pathlib import Path
 import streamlit as st
 from PIL import Image
 
+from recipe_slides.ai_pass import (
+    AIPassError,
+    apply_ai_result,
+    load_api_key,
+    read_manifest_mode,
+    run_ai_pass,
+)
 from recipe_slides.analysis_settings import load_settings
 from recipe_slides.archive import zip_files
 from recipe_slides.candidates import (
@@ -1005,6 +1012,22 @@ def render_frame_finder_analysis(
                     max_hash_distance=int(max_hash_distance),
                     fallback_interval=float(fallback_interval),
                 )
+            ai_available = bool(load_api_key())
+            use_ai = st.checkbox(
+                "Write captions with AI",
+                value=ai_available,
+                disabled=not ai_available,
+                help="Sends downscaled candidate frames to the OpenAI vision model to choose steps and write captions."
+                if ai_available
+                else "Add OPENAI_API_KEY to a .env file to enable this. Manual mode still works.",
+            )
+            ai_steps_raw = ""
+            if use_ai:
+                ai_steps_raw = st.text_area(
+                    "Recipe steps (optional)",
+                    height=120,
+                    placeholder="One step per line. Leave blank to let the model read the video.",
+                )
             label = "Refresh frame recommendations" if has_candidates else "Find recommended frames"
             if st.button(label, type="primary", use_container_width=True):
                 if analysis_start >= analysis_end:
@@ -1033,8 +1056,37 @@ def render_frame_finder_analysis(
                         path: "recipe" for path in project.frame_order
                     }
                     store.save(project)
-                    st.session_state[f"stage-{project.project_id}"] = 3
-                    set_flash("success", f"Frame Finder retained {len(found)} scene recommendations.")
+                    next_stage = 3
+                    flash = ("success", f"Frame Finder retained {len(found)} scene recommendations.")
+                    if use_ai:
+                        project_dir = store.project_dir(project.project_id)
+                        candidates_dir = store.candidates_dir(project)
+                        try:
+                            with st.spinner("Choosing steps and writing captions…"):
+                                ai_result = run_ai_pass(
+                                    found,
+                                    project_dir=project_dir,
+                                    candidates_rel_dir=str(candidates_dir.relative_to(project_dir)),
+                                    title=project.source_title or project.title,
+                                    mode=read_manifest_mode(candidates_dir / "manifest.json"),
+                                    steps=clean_steps(ai_steps_raw) or None,
+                                )
+                            apply_ai_result(project, ai_result)
+                            store.save(project)
+                            next_stage = 4
+                            flash = (
+                                "success",
+                                f"AI drafted {len(ai_result.slides)} captioned slides "
+                                f"({ai_result.input_tokens} in / {ai_result.output_tokens} out tokens). "
+                                "Review and edit them below.",
+                            )
+                        except AIPassError as error:
+                            flash = (
+                                "warning",
+                                f"{error} Frames were found; continuing in manual mode.",
+                            )
+                    st.session_state[f"stage-{project.project_id}"] = next_stage
+                    set_flash(*flash)
                     st.rerun()
                 except (FFmpegError, ValueError) as error:
                     st.error(str(error))
