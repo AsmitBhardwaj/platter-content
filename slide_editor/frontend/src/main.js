@@ -1,7 +1,7 @@
 import { Streamlit } from "streamlit-component-lib"
 import { Canvas, Rect, Shadow, Textbox } from "fabric"
 import "./style.css"
-import { CANVAS_HEIGHT, CANVAS_WIDTH, applyStyle, clone, defaultLayer, displayText, nextId, normalizeZ, reorder, styleFromLayer } from "./state"
+import { CANVAS_HEIGHT, CANVAS_WIDTH, applyStyle, clone, defaultLayer, displayText, moveItem, nextId, normalizeZ, reorder, styleFromLayer } from "./state"
 
 const app = document.querySelector("#app")
 let model = { slides: [], saved_styles: {}, fonts: [] }
@@ -15,6 +15,7 @@ let copiedLayer = null
 let saveTimer = null
 let initialized = false
 let stateSignature = ""
+let fontSignature = ""
 
 const escapeHtml = value => String(value ?? "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]))
 const currentSlide = () => model.slides[selectedSlide]
@@ -98,8 +99,9 @@ function buildPanel(layer, textbox) {
   if (!layer.background?.enabled) return null
   const scale = CANVAS_WIDTH / 1080
   const padding = Number(layer.background.padding || 0) * scale
+  const center = textbox.getCenterPoint()
   const rect = new Rect({
-    left: textbox.left - padding, top: textbox.top - padding,
+    left: center.x, top: center.y, originX: "center", originY: "center",
     width: textbox.width + padding * 2, height: textbox.height + padding * 2,
     rx: Number(layer.background.corner_radius || 0) * scale,
     ry: Number(layer.background.corner_radius || 0) * scale,
@@ -132,8 +134,21 @@ function textboxFor(layer) {
 }
 
 function rebuildCanvas() {
-  if (canvas) canvas.dispose()
-  canvas = new Canvas("slide-canvas", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT, preserveObjectStacking: true, selection: true })
+  if (!canvas) {
+    canvas = new Canvas("slide-canvas", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT, preserveObjectStacking: true, selection: true })
+    canvas.on("selection:created", event => selectObject(event.selected?.[0]))
+    canvas.on("selection:updated", event => selectObject(event.selected?.[0]))
+    canvas.on("selection:cleared", () => { selectedLayer = null; renderInspector() })
+    canvas.on("object:moving", event => snapObject(event.target))
+    canvas.on("object:modified", event => syncObject(event.target, true))
+    canvas.on("text:editing:entered", () => snapshot())
+    canvas.on("text:changed", event => syncObject(event.target, false))
+  } else {
+    const preservedSelection = selectedLayer
+    canvas.discardActiveObject()
+    canvas.clear()
+    selectedLayer = preservedSelection
+  }
   const slide = currentSlide()
   const shell = document.querySelector(".canvas-shell")
   shell.style.backgroundColor = slide?.background_color || "#141414"
@@ -145,12 +160,6 @@ function rebuildCanvas() {
     canvas.add(text)
     if (layer.id === selectedLayer) canvas.setActiveObject(text)
   }
-  canvas.on("selection:created", event => selectObject(event.selected?.[0]))
-  canvas.on("selection:updated", event => selectObject(event.selected?.[0]))
-  canvas.on("selection:cleared", () => { selectedLayer = null; renderInspector() })
-  canvas.on("object:moving", event => snapObject(event.target))
-  canvas.on("object:modified", event => syncObject(event.target, true))
-  canvas.on("text:changed", event => syncObject(event.target, false))
   canvas.requestRenderAll()
 }
 
@@ -191,6 +200,7 @@ function syncObject(object, recordHistory) {
 function editorMarkup() {
   return `<div class="editor">
     <aside class="rail"><h3>Slides</h3><div class="thumbs"></div><div class="rail-actions">
+      <button data-slide-action="earlier">↑ Move earlier</button><button data-slide-action="later">↓ Move later</button>
       <button data-slide-action="blank">＋ Blank slide</button><button data-slide-action="duplicate">Duplicate slide</button><button class="danger" data-slide-action="remove">Remove slide</button>
     </div></aside>
     <main class="workspace"><div class="toolbar">
@@ -222,14 +232,17 @@ function renderInspector() {
   const layer = currentLayer()
   const layers = normalizeZ(slide?.layers || []).reverse()
   const layerList = layers.length ? layers.map(item => `<div class="layer-item ${item.id === selectedLayer ? "active" : ""}"><button data-layer="${item.id}">${escapeHtml(item.text || "Untitled text")}</button><button data-layer-delete="${item.id}" aria-label="Delete layer">×</button></div>`).join("") : `<div class="empty">No text layers. Clean-frame export is supported.</div>`
-  let html = `<h3>Layers</h3>${layerList}<div class="section"><div class="button-row"><button data-z="front">To front</button><button data-z="forward">Forward</button><button data-z="backward">Backward</button><button data-z="back">To back</button></div></div>`
+  let html = `<h3>Slide</h3><div class="section slide-settings">
+    ${field("Name", `<input data-slide-field="name" value="${escapeHtml(slide?.name || "Slide")}">`)}
+    <div class="row">${field("Type", `<select data-slide-field="kind">${options(["cover", "recipe", "closing", "frame", "blank"], slide?.kind || "frame")}</select>`)}${field("Background", `<input data-slide-field="background_color" type="color" value="${escapeHtml(slide?.background_color || "#141414")}">`)}</div>
+  </div><h3>Layers</h3>${layerList}<div class="section"><div class="button-row"><button data-z="front">To front</button><button data-z="forward">Forward</button><button data-z="backward">Backward</button><button data-z="back">To back</button></div></div>`
   if (!layer) {
     root.innerHTML = html + `<div class="empty">Select a text layer or add one to format it.</div>`
     bindInspector()
     return
   }
   const faceMissing = !fontFaceFor(layer)
-  const families = [...new Set(model.fonts.map(face => face.family))]
+  const families = [...new Set([layer.font_family, ...model.fonts.map(face => face.family)])]
   const styleNames = Object.keys(model.saved_styles)
   html += `<div class="section"><h3>Text</h3>${faceMissing ? `<div class="fallback">Saved font “${escapeHtml(layer.font_family)}” is unavailable. Preview and export use Arial until you upload it again.</div>` : ""}
     ${field("Content", `<textarea data-field="text">${escapeHtml(layer.text)}</textarea>`)}
@@ -259,6 +272,11 @@ function setNested(layer, path, value) {
 }
 
 function bindInspector() {
+  document.querySelectorAll("[data-slide-field]").forEach(input => input.onchange = () => {
+    snapshot()
+    currentSlide()[input.dataset.slideField] = input.value
+    renderAll(); scheduleSave()
+  })
   document.querySelectorAll("[data-layer]").forEach(button => button.onclick = () => {
     selectedLayer = button.dataset.layer
     const object = canvas.getObjects().find(item => item.layerId === selectedLayer)
@@ -335,6 +353,12 @@ function slideAction(action) {
   if (action === "remove" && model.slides.length > 1) mutate(() => {
     model.slides.splice(selectedSlide, 1); selectedSlide = Math.min(selectedSlide, model.slides.length - 1); selectedLayer = null
   })
+  if (action === "earlier" && selectedSlide > 0) mutate(() => {
+    model.slides = moveItem(model.slides, selectedSlide, -1); selectedSlide -= 1; selectedLayer = null
+  })
+  if (action === "later" && selectedSlide < model.slides.length - 1) mutate(() => {
+    model.slides = moveItem(model.slides, selectedSlide, 1); selectedSlide += 1; selectedLayer = null
+  })
 }
 
 function renderAll() {
@@ -377,8 +401,10 @@ async function onRender(event) {
   const args = event.detail.args
   const incoming = args.payload || { slides: [], saved_styles: {}, fonts: [] }
   const signature = JSON.stringify({ slides: incoming.slides.map(slide => ({ ...slide, image: undefined })), saved_styles: incoming.saved_styles })
-  if (initialized && signature === stateSignature) return
+  const incomingFontSignature = JSON.stringify(incoming.fonts.map(face => [face.file_id, face.data_url]))
+  if (initialized && signature === stateSignature && incomingFontSignature === fontSignature) return
   stateSignature = signature
+  fontSignature = incomingFontSignature
   model = clone(incoming)
   selectedSlide = Math.min(Number(args.selected_slide || 0), Math.max(0, model.slides.length - 1))
   selectedLayer = null

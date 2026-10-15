@@ -69,7 +69,16 @@ class TextLayer:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TextLayer":
         allowed = cls.__dataclass_fields__
-        return cls(**{key: value for key, value in data.items() if key in allowed})
+        values = {key: value for key, value in data.items() if key in allowed}
+        defaults = cls()
+        for field_name in ("stroke", "shadow", "background"):
+            supplied = values.get(field_name)
+            if isinstance(supplied, dict):
+                values[field_name] = {
+                    **getattr(defaults, field_name),
+                    **supplied,
+                }
+        return cls(**values)
 
 
 @dataclass
@@ -134,6 +143,7 @@ class Project:
     analysis_end: float | None = None
     editor_slides: list[EditorSlide] = field(default_factory=list)
     editor_initialized: bool = False
+    editor_source_signature: str | None = None
     saved_text_styles: dict[str, dict[str, Any]] = field(default_factory=dict)
     settings: SlideSettings = field(default_factory=SlideSettings)
 
@@ -178,5 +188,6 @@ class Project:
             EditorSlide.from_dict(item) for item in values.get("editor_slides", [])
         ]
         values["editor_initialized"] = bool(values.get("editor_initialized", False))
+        values["editor_source_signature"] = values.get("editor_source_signature")
         values["saved_text_styles"] = dict(values.get("saved_text_styles", {}))
         return cls(**values)

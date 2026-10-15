@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { applyStyle, defaultLayer, displayText, normalizeZ, reorder, styleFromLayer } from "./state"
+import { applyStyle, defaultLayer, displayText, moveItem, normalizeZ, reorder, styleFromLayer } from "./state"
 
 describe("editor state", () => {
   it("normalizes and reorders z indexes", () => {
@@ -21,5 +21,12 @@ describe("editor state", () => {
     const layer = defaultLayer({ text: "mix gently", capitalization: "uppercase" })
     expect(displayText(layer)).toBe("MIX GENTLY")
     expect(layer.text).toBe("mix gently")
+  })
+
+  it("moves slides without mutating the saved order", () => {
+    const slides = [{ id: "cover" }, { id: "step" }, { id: "closing" }]
+    expect(moveItem(slides, 2, -1).map(slide => slide.id)).toEqual(["cover", "closing", "step"])
+    expect(slides.map(slide => slide.id)).toEqual(["cover", "step", "closing"])
+    expect(moveItem(slides, 0, -1)).toEqual(slides)
   })
 })

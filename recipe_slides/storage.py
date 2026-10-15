@@ -94,6 +94,9 @@ class ProjectStore:
         project.frame_texts = {}
         project.frame_crops = {}
         project.frame_roles = {}
+        project.editor_slides = []
+        project.editor_initialized = False
+        project.editor_source_signature = None
         self.save(project)
         return target
 
@@ -121,6 +124,9 @@ class ProjectStore:
         project.frame_texts = {}
         project.frame_crops = {}
         project.frame_roles = {}
+        project.editor_slides = []
+        project.editor_initialized = False
+        project.editor_source_signature = None
         self.save(project)
 
     def convert_to_frame_finder(self, project: Project) -> None:
@@ -133,6 +139,9 @@ class ProjectStore:
         project.frame_texts = {}
         project.frame_crops = {}
         project.frame_roles = {}
+        project.editor_slides = []
+        project.editor_initialized = False
+        project.editor_source_signature = None
         self.save(project)
 
     def video_path(self, project: Project) -> Path | None:

@@ -29,8 +29,8 @@ from recipe_slides.ffmpeg import (
     video_duration,
 )
 from recipe_slides.models import Project
-from recipe_slides.editor import apply_editor_value, editor_payload, initialize_editor
-from recipe_slides.editor_rendering import export_editor_project
+from recipe_slides.editor import apply_editor_value, editor_payload, sync_editor
+from recipe_slides.editor_rendering import export_editor_project, render_editor_slide
 from recipe_slides.fonts import resolve_font, save_uploaded_font
 from recipe_slides.rendering import (
     export_project,
@@ -1375,7 +1375,7 @@ def render_slide_editor(project: Project, project_dir: Path) -> None:
         "Edit slides",
         "Place any number of text layers directly on each 1080 × 1440 slide, then export the saved composition.",
     )
-    if initialize_editor(project):
+    if sync_editor(project):
         store.save(project)
 
     unavailable: list[str] = []
@@ -1418,10 +1418,26 @@ def render_slide_editor(project: Project, project_dir: Path) -> None:
         st.session_state[selected_key] = max(0, min(selected, len(project.editor_slides) - 1))
         store.save(project)
 
+    selected_slide = max(
+        0,
+        min(int(st.session_state.get(selected_key, 0)), len(project.editor_slides) - 1),
+    )
+    with st.expander("Exact export preview"):
+        preview_warnings: list[str] = []
+        st.image(
+            render_editor_slide(
+                project.editor_slides[selected_slide], project_dir, preview_warnings
+            ),
+            caption="Rendered by the same full-resolution engine used for PNG export.",
+            use_container_width=True,
+        )
+        for warning in preview_warnings:
+            st.warning(warning)
+
     with st.container(border=True):
         st.markdown("### Ready to export")
         st.caption(
-            f"Renders {len(project.editor_slides)} slides at 1080 × 1440 from the saved layer model. Slides without text stay clean."
+            f"Renders {len(project.editor_slides)} slides at 1080 × 1440 from the saved layer model. Slides without text stay clean. Wait for “Saved locally” in the editor before exporting the latest change."
         )
         export_label = "Export frames" if project.workflow_mode == "frame_finder" else "Export slideshow"
         if st.button(export_label, type="primary", use_container_width=True):

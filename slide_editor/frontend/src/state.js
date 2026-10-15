@@ -56,3 +56,12 @@ export function reorder(layers, id, action) {
   else ordered.splice(Math.max(0, index - 1), 0, item)
   return ordered.map((layer, newIndex) => ({ ...layer, z_index: newIndex }))
 }
+
+export function moveItem(items, index, offset) {
+  const destination = index + offset
+  if (index < 0 || index >= items.length || destination < 0 || destination >= items.length) return [...items]
+  const moved = [...items]
+  const [item] = moved.splice(index, 1)
+  moved.splice(destination, 0, item)
+  return moved
+}

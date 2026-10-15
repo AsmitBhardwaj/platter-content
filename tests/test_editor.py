@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops
 
-from recipe_slides.editor import apply_editor_value, initialize_editor
+from recipe_slides.editor import apply_editor_value, initialize_editor, sync_editor
 from recipe_slides.editor_rendering import export_editor_project, render_editor_slide
 from recipe_slides.models import EditorSlide, Project, TextLayer
 
@@ -46,6 +46,33 @@ def test_old_frame_instruction_becomes_one_editable_layer() -> None:
 
     assert len(project.editor_slides) == 1
     assert [layer.text for layer in project.editor_slides[0].layers] == ["Fold in the herbs"]
+
+
+def test_frame_finder_sync_preserves_edits_and_follows_selected_order() -> None:
+    first = "candidates/first.jpg"
+    second = "candidates/second.jpg"
+    project = Project(
+        "finder-sync",
+        "Frames",
+        "",
+        [],
+        workflow_mode="frame_finder",
+        frame_order=[first, second],
+        frame_roles={first: "cover", second: "recipe"},
+    )
+    initialize_editor(project)
+    project.editor_slides[0].layers.append(TextLayer(text="Keep my edit"))
+
+    project.frame_order = [second, first]
+    project.frame_roles[first] = "closing"
+    project.frame_crops[first] = {"x": 0.25, "y": 0.8}
+
+    assert sync_editor(project)
+    assert [slide.source_frame for slide in project.editor_slides] == [second, first]
+    assert project.editor_slides[1].kind == "closing"
+    assert project.editor_slides[1].crop == {"x": 0.25, "y": 0.8}
+    assert [layer.text for layer in project.editor_slides[1].layers] == ["Keep my edit"]
+    assert not sync_editor(project)
 
 
 def test_component_value_round_trips_normalized_layer_geometry() -> None:
@@ -125,3 +152,32 @@ def test_editor_export_keeps_text_optional_and_numbered(tmp_path: Path) -> None:
     assert [path.name for path in outputs] == ["01-blank.png", "02-closing.png"]
     assert all(Image.open(path).size == (1080, 1440) for path in outputs)
     assert isinstance(warnings, list)
+
+
+def test_exact_preview_pixels_match_export(tmp_path: Path) -> None:
+    slide = EditorSlide(
+        name="Preview",
+        kind="frame",
+        background_color="#24384A",
+        layers=[TextLayer(text="Same renderer", x=0.17, y=0.31, rotation=7)],
+    )
+
+    preview = render_editor_slide(slide, tmp_path)
+    outputs, _ = export_editor_project([slide], tmp_path, tmp_path / "exports")
+
+    with Image.open(outputs[0]) as exported:
+        assert ImageChops.difference(preview, exported.convert("RGB")).getbbox() is None
+
+
+def test_partial_saved_layer_styles_receive_safe_defaults() -> None:
+    layer = TextLayer.from_dict(
+        {
+            "text": "Legacy",
+            "stroke": {"width": 4},
+            "background": {"enabled": True},
+        }
+    )
+
+    assert layer.stroke == {"color": "#000000", "width": 4}
+    assert layer.background["color"] == "#000000"
+    assert layer.background["enabled"] is True
