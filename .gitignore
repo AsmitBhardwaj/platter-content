@@ -1,9 +1,30 @@
+.DS_Store
 .env
+.env.*
+!.env.example
 .venv/
+venv/
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Private local recipe projects, uploaded videos, frames, and exports
+data/
 projects/
 exports/
 downloads/
 *.mp4
 *.mov
-.DS_Store
+*.m4v
+*.avi
+*.mkv
+*.webm
+
+# Authentication material is never part of this project
+cookies.txt
+*.cookies
+.netrc
+credentials*.json
+client_secret*.json
