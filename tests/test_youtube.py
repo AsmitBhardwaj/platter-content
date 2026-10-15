@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from recipe_slides.youtube import (
+    DOWNLOAD_FORMAT,
     YouTubeDownloadError,
     download_youtube_video,
     friendly_download_error,
@@ -59,12 +60,20 @@ def test_equivalent_youtube_links_identify_the_same_cached_source() -> None:
         ("ERROR: Private video", "private"),
         ("Sign in to confirm your age", "age-restricted"),
         ("ERROR: Video unavailable", "unavailable"),
-        ("Requested format is not available", "MP4-compatible"),
+        ("Requested format is not available", "requested quality"),
         ("HTTP Error 500", "download failed"),
     ],
 )
 def test_download_errors_are_mapped_to_useful_messages(detail: str, expected: str) -> None:
     assert expected in friendly_download_error(detail)
+
+
+def test_real_yt_dlp_message_is_surfaced() -> None:
+    message = friendly_download_error(
+        "\x1b[0;31mERROR:\x1b[0m [youtube] abc: Sign in to confirm you\u2019re not a bot"
+    )
+    assert "yt-dlp: [youtube] abc: Sign in to confirm" in message
+    assert "\x1b" not in message
 
 
 def test_download_wraps_yt_dlp_errors_and_cleans_partial_files(tmp_path: Path) -> None:
@@ -127,7 +136,9 @@ def test_download_returns_local_video_title_and_thumbnail(tmp_path: Path) -> Non
     assert result.video_path == tmp_path / "source-youtube.mp4"
     assert result.video_path.read_bytes() == b"video"
     assert result.thumbnail_path == tmp_path / "thumbnail.webp"
-    assert captured_options["format"] == "bestvideo[height<=1080][ext=mp4]"
+    assert captured_options["format"] == DOWNLOAD_FORMAT
+    assert "+ba[" in DOWNLOAD_FORMAT and DOWNLOAD_FORMAT.endswith("/b")
+    assert captured_options["merge_output_format"] == "mp4"
     assert "merge_output_format" not in captured_options
     assert progress_updates[-1] == (1.0, "Download complete")
     assert any("video-only" in message for _, message in progress_updates)

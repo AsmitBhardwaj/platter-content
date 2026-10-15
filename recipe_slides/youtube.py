@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -24,6 +25,9 @@ class YouTubeDownload:
 
 
 ProgressCallback = Callable[[DownloadProgress], None]
+
+DOWNLOAD_FORMAT = "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b"
+_VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
 
 _YOUTUBE_HOSTS = {
     "youtube.com",
@@ -64,7 +68,25 @@ def is_same_youtube_video(first: str, second: str) -> bool:
     return first_id is not None and first_id == youtube_video_id(second)
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _raw_detail(error: BaseException | str, limit: int = 400) -> str:
+    """The real yt-dlp message, stripped of colour codes and truncated."""
+    text = _ANSI.sub("", str(error)).strip()
+    text = re.sub(r"^ERROR:\s*", "", text)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def friendly_download_error(error: BaseException | str) -> str:
+    message = _friendly_message(error)
+    detail = _raw_detail(error)
+    if not detail:
+        return message
+    return f"{message} (yt-dlp: {detail})"
+
+
+def _friendly_message(error: BaseException | str) -> str:
     detail = str(error).lower()
     if any(marker in detail for marker in ("private video", "video is private")):
         return "This YouTube video is private. Use a public video or upload the file locally."
@@ -88,12 +110,12 @@ def friendly_download_error(error: BaseException | str) -> str:
     ):
         return "This YouTube video is unavailable or restricted in your region."
     if "requested format is not available" in detail:
-        return "YouTube did not offer an MP4-compatible version of this video."
+        return "YouTube did not offer a downloadable version of this video in the requested quality."
     if any(marker in detail for marker in ("unable to download webpage", "timed out", "name resolution")):
         return "Could not reach YouTube. Check your internet connection and try again."
     if any(marker in detail for marker in ("http error 403", "http error 429", "too many requests")):
         return "YouTube refused the download. Wait a while, update yt-dlp, and try again."
-    return "The YouTube download failed. Check the link and your connection, then try again."
+    return "The YouTube download failed."
 
 
 def _progress_hook(callback: ProgressCallback | None) -> Callable[[dict[str, Any]], None]:
@@ -105,7 +127,7 @@ def _progress_hook(callback: ProgressCallback | None) -> Callable[[dict[str, Any
             downloaded = float(status.get("downloaded_bytes") or 0)
             total = float(status.get("total_bytes") or status.get("total_bytes_estimate") or 0)
             fraction = min(0.9, (downloaded / total) * 0.9) if total else 0.05
-            callback(DownloadProgress(fraction, "Downloading video-only source…"))
+            callback(DownloadProgress(fraction, "Downloading video…"))
         elif phase == "finished":
             callback(DownloadProgress(0.95, "Saving temporary source…"))
         elif phase == "error":
@@ -144,8 +166,10 @@ def download_youtube_video(
     _clean_temporary_downloads(output_dir)
     output_template = str(output_dir / "youtube-download.%(ext)s")
     options: dict[str, Any] = {
-        # Strictly video-only: audio is unnecessary for candidate frame extraction.
-        "format": "bestvideo[height<=1080][ext=mp4]",
+        # Video with audio (audio is needed later for transcripts), with fallbacks
+        # for videos that lack separate MP4/M4A streams.
+        "format": DOWNLOAD_FORMAT,
+        "merge_output_format": "mp4",
         "outtmpl": output_template,
         "noplaylist": True,
         "writethumbnail": True,
@@ -161,14 +185,24 @@ def download_youtube_video(
         _clean_temporary_downloads(output_dir)
         raise YouTubeDownloadError(friendly_download_error(error)) from error
 
-    video_path = output_dir / "youtube-download.mp4"
-    if not video_path.exists():
+    video_path = next(
+        (
+            path
+            for path in sorted(output_dir.glob("youtube-download.*"))
+            if path.suffix.lower() in _VIDEO_SUFFIXES
+        ),
+        None,
+    )
+    if video_path is None:
         _clean_temporary_downloads(output_dir)
         raise YouTubeDownloadError(
-            "The download completed but no MP4 video was produced. Try uploading the video locally."
+            "The download completed but no video file was produced. Try uploading the video locally."
         )
 
-    final_video = output_dir / "source-youtube.mp4"
+    final_video = output_dir / f"source-youtube{video_path.suffix.lower()}"
+    for stale in output_dir.glob("source-youtube.*"):
+        if stale != final_video:
+            stale.unlink()
     if final_video.exists():
         final_video.unlink()
     video_path.replace(final_video)
