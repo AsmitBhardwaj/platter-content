@@ -14,9 +14,12 @@ needs_ffmpeg = pytest.mark.skipif(
 
 
 def _make_video(path: Path, source: str, seconds: int) -> Path:
+    spec = f"{source}:size=640x360:rate=30:duration={seconds}"
+    if source == "testsrc2":
+        spec = f"testsrc2=size=640x360:rate=30:duration={seconds}"
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
-         "-i", f"{source}:size=640x360:rate=30:duration={seconds}", "-pix_fmt", "yuv420p", str(path)],
+         "-i", spec, "-pix_fmt", "yuv420p", str(path)],
         check=True,
     )
     return path
