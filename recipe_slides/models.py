@@ -34,6 +34,9 @@ class Project:
     frame_order: list[str] = field(default_factory=list)
     frame_texts: dict[str, str] = field(default_factory=dict)
     frame_crops: dict[str, dict[str, float]] = field(default_factory=dict)
+    frame_roles: dict[str, str] = field(default_factory=dict)
+    analysis_start: float = 0.0
+    analysis_end: float | None = None
     settings: SlideSettings = field(default_factory=SlideSettings)
 
     def __post_init__(self) -> None:
@@ -41,6 +44,12 @@ class Project:
             raise ValueError("workflow_mode must be 'recipe_steps' or 'frame_finder'")
         if self.target_slide_count < 1:
             raise ValueError("target_slide_count must be positive")
+        if self.analysis_start < 0:
+            raise ValueError("analysis_start cannot be negative")
+        if self.analysis_end is not None and self.analysis_end <= self.analysis_start:
+            raise ValueError("analysis_end must be after analysis_start")
+        if any(role not in {"cover", "recipe", "closing"} for role in self.frame_roles.values()):
+            raise ValueError("frame roles must be cover, recipe, or closing")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -58,4 +67,9 @@ class Project:
         values["frame_order"] = list(values.get("frame_order", []))
         values["frame_texts"] = dict(values.get("frame_texts", {}))
         values["frame_crops"] = dict(values.get("frame_crops", {}))
+        values["frame_roles"] = dict(values.get("frame_roles", {}))
+        values["analysis_start"] = float(values.get("analysis_start", 0.0))
+        values["analysis_end"] = (
+            float(values["analysis_end"]) if values.get("analysis_end") is not None else None
+        )
         return cls(**values)

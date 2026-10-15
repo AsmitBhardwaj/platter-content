@@ -21,6 +21,7 @@ class FrameCandidate:
     image_hash: str
     uniqueness: float = 1.0
     stability: float = 1.0
+    in_analysis_range: bool = True
 
     @classmethod
     def from_dict(cls, value: dict[str, object]) -> "FrameCandidate":

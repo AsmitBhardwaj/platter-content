@@ -70,3 +70,28 @@ def test_legacy_project_defaults_to_recipe_workflow() -> None:
     )
 
     assert project.workflow_mode == "recipe_steps"
+
+
+def test_convert_old_project_preserves_source_and_candidates(tmp_path: Path) -> None:
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create("Tiramisu", "2", ["Add sugar", "Fold mascarpone"])
+    project_dir = store.project_dir(project.project_id)
+    media = project_dir / "media"
+    media.mkdir()
+    source = media / "source.mp4"
+    source.write_bytes(b"video")
+    project.video_filename = "media/source.mp4"
+    candidate = store.candidates_dir(project) / "frame-0001.jpg"
+    candidate.write_bytes(b"frame")
+    project.selections = {"0": "candidates/frame-0001.jpg"}
+    store.save(project)
+
+    store.convert_to_frame_finder(project)
+    converted = store.load(project.project_id)
+
+    assert converted.workflow_mode == "frame_finder"
+    assert converted.steps == ["Add sugar", "Fold mascarpone"]
+    assert converted.frame_order == []
+    assert converted.frame_texts == {}
+    assert source.exists()
+    assert candidate.exists()

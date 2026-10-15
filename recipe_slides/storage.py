@@ -93,6 +93,7 @@ class ProjectStore:
         project.frame_order = []
         project.frame_texts = {}
         project.frame_crops = {}
+        project.frame_roles = {}
         self.save(project)
         return target
 
@@ -119,6 +120,19 @@ class ProjectStore:
         project.frame_order = []
         project.frame_texts = {}
         project.frame_crops = {}
+        project.frame_roles = {}
+        self.save(project)
+
+    def convert_to_frame_finder(self, project: Project) -> None:
+        """Convert workflow metadata without touching source media or candidate assets."""
+        project.workflow_mode = "frame_finder"
+        project.target_slide_count = max(1, len(project.steps) or project.target_slide_count)
+        # Old numeric selections came from chronological step partitioning, so they are
+        # intentionally not promoted to the new user-authored frame sequence.
+        project.frame_order = []
+        project.frame_texts = {}
+        project.frame_crops = {}
+        project.frame_roles = {}
         self.save(project)
 
     def video_path(self, project: Project) -> Path | None:
