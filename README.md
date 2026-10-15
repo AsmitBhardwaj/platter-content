@@ -2,7 +2,7 @@
 
 A polished, local-first Streamlit workspace that turns a cooking video into selected portrait frames or a complete recipe slideshow. **Frame Finder** is the default workflow and needs only a video URL and approximate slide count. The existing recipe-step workflow remains available as an optional mode, with its established 1080×1440 slide design unchanged.
 
-YouTube downloads use yt-dlp and are saved only inside the selected project's private local data directory. To minimize bandwidth and temporary disk use, the app downloads a video-only MP4 stream with no audio and caps it at 1080p. Downloaded media, thumbnails, uploaded media, saved projects, extracted frames, exports, cookies, and credentials are excluded from Git. The app does not use account cookies and does not include automatic captions or LLM integration.
+YouTube downloads use yt-dlp and are saved only inside the selected project's private local data directory. The app downloads video with audio (capped at 1080p, with fallbacks for videos that lack separate MP4/M4A streams) and surfaces the real yt-dlp error if a download fails. Uploading a file is the default and most reliable option. Downloaded media, thumbnails, uploaded media, saved projects, extracted frames, exports, cookies, and credentials are excluded from Git. The app does not use account cookies and does not include automatic captions or LLM integration.
 
 ## Requirements
 
@@ -36,7 +36,7 @@ Open the local URL printed by Streamlit (normally `http://localhost:8501`). Use 
 
 ## Frame Finder workflow
 
-1. **Video setup** — paste a YouTube URL and choose the approximate number of slides. No title, episode, or placeholder recipe steps are required.
+1. **Video setup** — upload a video file (default) or paste a YouTube URL, and choose the approximate number of slides. No title, episode, or placeholder recipe steps are required.
 2. **Find frames** — preview the video and use **Start cooking here** and **End cooking here**, or enter exact start and end timestamps, to define the cooking range. FFmpeg detects scenes only inside that range. Around each stable scene midpoint, Platter extracts a five-frame burst at approximately −0.5, −0.25, 0, +0.25, and +0.5 seconds. It rejects near-black, overexposed, severely blurred, transitional, and duplicate frames, then keeps the strongest representative from each useful scene. Representative frames before and after the range remain separate as optional cover and closing choices.
 3. **Refine gallery** — review cooking recommendations in chronological order with normalized sharpness and overall-quality scores. These scores describe visual clarity, not whether a frame matches an instruction. Add or remove frames, classify each as **Cover**, **Recipe step**, or **Closing**, move selected frames earlier or later, and fine-tune each 1080×1440 crop.
 4. **Text & export** — use the ordered editor to add an optional instruction to any selected frame. A frame has no step title until you explicitly enter one. Reorder frames again if needed, then export clean numbered PNG frames or slides with the saved instructions. Clean export ignores saved text without deleting it, and the ZIP follows the chosen frame order.
@@ -46,7 +46,7 @@ Frame Finder ranks burst frames using sharpness, exposure, scene stability, and 
 ## Recipe-step workflow
 
 1. **Recipe details** — enter the title, episode, ordered recipe steps, cover label, closing message, and existing slide text-color setting.
-2. **Video source** — choose **YouTube link** or **Local upload**, review the compact source status card, and run scene analysis. A YouTube download retrieves the best video-only MP4 up to 1080p, plus its title and thumbnail when available.
+2. **Video source** — choose **YouTube link** or **Local upload**, review the compact source status card, and run scene analysis. A YouTube download retrieves the best video with audio up to 1080p, plus its title and thumbnail when available.
 3. **Select frames** — work through one numbered recipe-step card at a time. Recommendations are ranked only for visual clarity; they are not assigned from equal timeline partitions and do not claim to match the instruction. Nothing is selected automatically. Choose each frame explicitly, then open **Fine tune timestamp and crop** to extract nearby alternatives, adjust the portrait crop, and inspect its final 1080×1440 preview.
 4. **Review & export** — inspect the cover, every numbered step slide, and the closing slide in a responsive review grid. **Export slideshow** renders the PNG set; the ZIP download appears as the final success state.
 
@@ -95,3 +95,7 @@ data/projects/               Private runtime data (created locally, Git-ignored)
 ```
 
 Each saved project contains `project.json`, its temporary downloaded or uploaded source video, an optional YouTube thumbnail, candidate JPEGs and their analysis manifest, and an `exports/` folder. Saved crop positions are stored per recipe step. With default settings the source video is removed after a successful export. Recommendations, crops, and exports continue to work from extracted candidates after source cleanup, but nearby timestamp extraction does not. The exported filenames sort in slideshow order: `00-cover.png`, numbered step slides, then the numbered closing slide.
+
+## Analysis settings and fallbacks
+
+Scene threshold, minimum sharpness, duplicate sensitivity (`max_hash_distance`) and the fallback interval are adjustable under **Advanced analysis settings** in the Find frames stage, or via an optional `analysis_settings.json` in the project root (keys: `scene_threshold`, `min_sharpness`, `max_hash_distance`, `min_brightness`, `max_brightness`, `min_scene_frames`, `fallback_interval`). When scene detection yields fewer than `min_scene_frames` (6) frames, Frame Finder also samples every `fallback_interval` seconds (1.5) and keeps the sharpest frame from a burst around each sample. If every frame is rejected, thresholds are relaxed automatically (recorded in `manifest.json`) instead of returning an empty gallery.
