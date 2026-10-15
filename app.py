@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import streamlit as st
 from PIL import Image
 
+from recipe_slides.analysis_settings import load_settings
 from recipe_slides.archive import zip_files
 from recipe_slides.candidates import (
     FrameCandidate,
@@ -139,7 +141,7 @@ def render_new_project() -> None:
         render_stage_heading(
             1,
             "Find the strongest moments",
-            "Paste a cooking-video URL and choose roughly how many frames you want. No recipe steps are required.",
+            "Upload a cooking video (or paste a YouTube link) and choose roughly how many frames you want. No recipe steps are required.",
         )
     else:
         render_stage_heading(
@@ -149,11 +151,29 @@ def render_new_project() -> None:
         )
     with st.container(border=True):
         if frame_finder:
-            youtube_url = st.text_input(
-                "Video URL",
-                placeholder="https://www.youtube.com/watch?v=…",
-                help="YouTube watch, Shorts, and youtu.be links are supported.",
+            source_choice = st.radio(
+                "Video source",
+                ["Upload video file", "YouTube link"],
+                horizontal=True,
+                key="frame-finder-new-source",
+                help="Uploading a file is the most reliable option. YouTube downloads can be blocked or rate-limited.",
             )
+            use_upload = source_choice == "Upload video file"
+            uploaded = None
+            youtube_url = ""
+            if use_upload:
+                uploaded = st.file_uploader(
+                    "Video file",
+                    type=["mp4", "mov", "m4v", "avi", "mkv", "webm"],
+                    key="frame-finder-new-upload",
+                    help="MP4, MOV, M4V, AVI, MKV, and WebM are supported.",
+                )
+            else:
+                youtube_url = st.text_input(
+                    "Video URL",
+                    placeholder="https://www.youtube.com/watch?v=…",
+                    help="YouTube watch, Shorts, and youtu.be links are supported.",
+                )
             target_count = st.number_input(
                 "Approximate number of slides",
                 min_value=1,
@@ -165,12 +185,32 @@ def render_new_project() -> None:
             if not tools_available():
                 st.warning("Install FFmpeg and restart the app before starting Frame Finder.")
             create = st.button(
-                "Download video and continue",
+                "Save video and continue" if use_upload else "Download video and continue",
                 type="primary",
-                disabled=not tools_available(),
+                disabled=not tools_available() or (use_upload and uploaded is None),
                 use_container_width=True,
             )
-            if create:
+            if create and use_upload:
+                try:
+                    project = store.create(
+                        "Frame Finder",
+                        "",
+                        [],
+                        workflow_mode="frame_finder",
+                        target_slide_count=int(target_count),
+                    )
+                    store.save_video(project, uploaded)
+                    project.title = Path(uploaded.name).stem
+                    store.save(project)
+                    st.session_state["creating-project"] = False
+                    st.session_state["active-project-id"] = project.project_id
+                    st.session_state["force-project-navigator"] = project.project_id
+                    st.session_state[f"stage-{project.project_id}"] = 2
+                    set_flash("success", f"Saved {uploaded.name}. Frame Finder is ready to analyze it.")
+                    st.rerun()
+                except (OSError, ValueError) as error:
+                    st.error(str(error))
+            elif create:
                 if not is_valid_youtube_url(youtube_url):
                     st.error("Enter a valid YouTube URL.")
                 else:
@@ -768,14 +808,33 @@ def render_frame_finder_setup(project: Project, project_dir: Path, video_path: P
     render_stage_heading(
         1,
         "Frame Finder setup",
-        "Update the source URL or the approximate number of slides without adding recipe steps.",
+        "Upload a video or update the YouTube link and the approximate number of slides. No recipe steps are required.",
     )
     with st.container(border=True):
-        youtube_url = st.text_input(
-            "Video URL",
-            value=project.source_url or "",
-            placeholder="https://www.youtube.com/watch?v=…",
+        source_choice = st.radio(
+            "Video source",
+            ["Upload video file", "YouTube link"],
+            index=1 if project.video_source == "youtube" or project.source_url else 0,
+            horizontal=True,
+            key=f"frame-finder-source-{project.project_id}",
         )
+        use_upload = source_choice == "Upload video file"
+        uploaded = None
+        youtube_url = ""
+        if use_upload:
+            if video_path and project.video_source == "upload":
+                st.caption(f"Current video: {project.source_title or video_path.name}. Upload a file to replace it.")
+            uploaded = st.file_uploader(
+                "Video file",
+                type=["mp4", "mov", "m4v", "avi", "mkv", "webm"],
+                key=f"frame-finder-upload-{project.project_id}",
+            )
+        else:
+            youtube_url = st.text_input(
+                "Video URL",
+                value=project.source_url or "",
+                placeholder="https://www.youtube.com/watch?v=…",
+            )
         target_count = st.number_input(
             "Approximate number of slides",
             min_value=1,
@@ -784,6 +843,24 @@ def render_frame_finder_setup(project: Project, project_dir: Path, video_path: P
             step=1,
         )
         if st.button("Save and continue", type="primary", use_container_width=True):
+            project.target_slide_count = int(target_count)
+            if use_upload:
+                if uploaded is None and not (video_path and project.video_source == "upload"):
+                    st.error("Choose a video file to upload.")
+                    return
+                try:
+                    if uploaded is not None:
+                        store.save_video(project, uploaded)
+                        project.title = Path(uploaded.name).stem
+                        project.target_slide_count = int(target_count)
+                        clear_frame_widget_state(project.project_id)
+                    store.save(project)
+                except (OSError, ValueError) as error:
+                    st.error(str(error))
+                    return
+                st.session_state[f"stage-{project.project_id}"] = 2
+                set_flash("success", "Frame Finder settings saved.")
+                st.rerun()
             if not is_valid_youtube_url(youtube_url):
                 st.error("Enter a valid YouTube URL.")
                 return
@@ -792,7 +869,6 @@ def render_frame_finder_setup(project: Project, project_dir: Path, video_path: P
                 and project.source_url
                 and is_same_youtube_video(youtube_url, project.source_url)
             )
-            project.target_slide_count = int(target_count)
             if same_source:
                 store.save(project)
                 st.session_state[f"stage-{project.project_id}"] = 2
@@ -900,6 +976,35 @@ def render_frame_finder_analysis(
                 "Cooking-scene detection runs only inside this range. Frames before and after it remain available separately for optional cover or closing use."
             )
             st.metric("Target gallery size", f"About {project.target_slide_count} frames")
+            with st.expander("Advanced analysis settings"):
+                base = load_settings()
+                st.caption(
+                    "Defaults can also be set in analysis_settings.json. If every frame is rejected, "
+                    "thresholds are relaxed automatically."
+                )
+                scene_threshold = st.slider(
+                    "Scene-change threshold", 0.05, 0.95, float(base.scene_threshold), 0.05,
+                    help="Lower values detect more cuts.",
+                )
+                min_sharpness = st.number_input(
+                    "Minimum sharpness", min_value=0.0, value=float(base.min_sharpness), step=5.0
+                )
+                max_hash_distance = st.slider(
+                    "Duplicate sensitivity (max hash distance)", 0, 20, int(base.max_hash_distance),
+                    help="Frames closer than this are treated as duplicates.",
+                )
+                fallback_interval = st.number_input(
+                    "Fallback sampling interval (seconds)",
+                    min_value=0.5, value=float(base.fallback_interval), step=0.5,
+                    help="Used when scene detection finds too few frames.",
+                )
+                analysis_settings = replace(
+                    base,
+                    scene_threshold=float(scene_threshold),
+                    min_sharpness=float(min_sharpness),
+                    max_hash_distance=int(max_hash_distance),
+                    fallback_interval=float(fallback_interval),
+                )
             label = "Refresh frame recommendations" if has_candidates else "Find recommended frames"
             if st.button(label, type="primary", use_container_width=True):
                 if analysis_start >= analysis_end:
@@ -915,6 +1020,7 @@ def render_frame_finder_analysis(
                             project.target_slide_count,
                             start_time=project.analysis_start,
                             end_time=project.analysis_end,
+                            settings=analysis_settings,
                         )
                     project.frame_order = [
                         str((store.candidates_dir(project) / item.path).relative_to(store.project_dir(project.project_id)))

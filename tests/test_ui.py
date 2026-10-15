@@ -103,3 +103,16 @@ def test_frame_finder_gallery_and_export_stages_render(tmp_path: Path, monkeypat
     export_app = run_app()
     assert_stage(export_app, "Edit slides")
     assert "Export frames" in [item.label for item in export_app.button]
+
+
+def test_frame_finder_new_project_offers_upload_first() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=30)
+    app.session_state["creating-project"] = True
+    app.run()
+    assert not app.exception
+    source = next(item for item in app.radio if item.label == "Video source")
+    assert source.options == ["Upload video file", "YouTube link"]
+    assert source.value == "Upload video file"
+    assert len(app.get("file_uploader")) == 1
