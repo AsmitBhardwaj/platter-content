@@ -31,3 +31,6 @@ cookies.txt
 .netrc
 credentials*.json
 client_secret*.json
+
+# Built frontend bundle (regenerate with npm run build)
+slide_editor/frontend/dist/
