@@ -9,15 +9,14 @@ from recipe_slides.archive import zip_files
 from recipe_slides.candidates import (
     FrameCandidate,
     analyze_frame,
-    assign_candidates_to_steps,
-    candidate_quality_score,
     clamp_timestamp,
     crop_frame,
     format_timestamp,
     frame_finder_quality_score,
     load_manifest,
     migrate_legacy_frames,
-    rank_candidates,
+    move_frame,
+    rank_by_visual_clarity,
     remove_duplicates,
     save_manifest,
 )
@@ -298,6 +297,46 @@ def render_recipe_details(project: Project) -> None:
             st.rerun()
 
 
+def render_conversion_banner(project: Project, has_candidates: bool) -> None:
+    with st.container(border=True):
+        st.markdown("**Recommended: switch to the frame-first workflow**")
+        st.caption(
+            "Frame Finder lets you choose and order visually strong frames before adding optional instructions. Your source video and generated candidates are preserved."
+        )
+        if st.button(
+            "Convert to Frame Finder",
+            key=f"convert-finder-{project.project_id}",
+            type="primary",
+            use_container_width=True,
+        ):
+            st.session_state[f"confirm-convert-{project.project_id}"] = True
+        if st.session_state.get(f"confirm-convert-{project.project_id}"):
+            st.warning(
+                "Existing automatic step-to-frame associations will be cleared. Recipe text remains stored in the project."
+            )
+            confirm, cancel = st.columns(2)
+            with confirm:
+                if st.button(
+                    "Convert project",
+                    key=f"confirm-convert-button-{project.project_id}",
+                    use_container_width=True,
+                ):
+                    store.convert_to_frame_finder(project)
+                    clear_frame_widget_state(project.project_id)
+                    st.session_state[f"stage-{project.project_id}"] = 3 if has_candidates else 2
+                    st.session_state[f"confirm-convert-{project.project_id}"] = False
+                    set_flash("success", "Project converted. Select and order frames before adding text.")
+                    st.rerun()
+            with cancel:
+                if st.button(
+                    "Keep Recipe Steps",
+                    key=f"cancel-convert-button-{project.project_id}",
+                    use_container_width=True,
+                ):
+                    st.session_state[f"confirm-convert-{project.project_id}"] = False
+                    st.rerun()
+
+
 def render_source_card(project: Project, video_path: Path | None) -> None:
     with st.container(border=True):
         thumbnail_path = store.thumbnail_path(project)
@@ -525,9 +564,8 @@ def render_frame_selection(
     render_stage_heading(
         3,
         "Select frames",
-        "Choose one image per step. Recommendations are chronological, but your manual choice is final.",
+        "Visual recommendations are not matched to instruction meaning. Choose a frame explicitly for every step, or convert to Frame Finder for a frame-first workflow.",
     )
-    groups = assign_candidates_to_steps(candidates, len(project.steps))
     all_steps_ready = True
 
     for step_index, step in enumerate(project.steps):
@@ -537,12 +575,7 @@ def render_frame_selection(
                 unsafe_allow_html=True,
             )
             st.markdown(f"### {step}")
-            ranked = rank_candidates(
-                groups[step_index],
-                step_index=step_index,
-                step_count=len(project.steps),
-                duration=duration,
-            )
+            ranked = rank_by_visual_clarity(candidates)
             recommendations = ranked[:3]
             if not recommendations:
                 all_steps_ready = False
@@ -562,8 +595,9 @@ def render_frame_selection(
                 if saved_candidate and (project_dir / current).exists():
                     available_paths[current] = saved_candidate
             if current not in available_paths:
-                current = str((candidates_dir / recommendations[0].path).relative_to(project_dir))
-                project.selections[str(step_index)] = current
+                current = None
+                project.selections.pop(str(step_index), None)
+                all_steps_ready = False
 
             sharpness_range = (
                 min(item.sharpness for item in ranked),
@@ -575,12 +609,8 @@ def render_frame_selection(
             ):
                 relative_path = str((candidates_dir / candidate.path).relative_to(project_dir))
                 selected = relative_path == current
-                score = candidate_quality_score(
-                    candidate,
-                    sharpness_range=sharpness_range,
-                    step_index=step_index,
-                    step_count=len(project.steps),
-                    duration=duration,
+                score = frame_finder_quality_score(
+                    candidate, sharpness_range=sharpness_range
                 )
                 with column:
                     with st.container(border=True):
@@ -590,6 +620,7 @@ def render_frame_selection(
                         )
                         st.image(str(candidates_dir / candidate.path), use_container_width=True)
                         render_quality(format_timestamp(candidate.timestamp), score)
+                        st.caption("Quality measures visual clarity, not agreement with this instruction.")
                         if selected:
                             st.button(
                                 "✓ Currently selected",
@@ -607,6 +638,10 @@ def render_frame_selection(
                             set_flash("success", f"Selected a new frame for step {step_index + 1}.")
                             st.rerun()
 
+            if current is None:
+                st.info("No frame is assigned yet. Select one explicitly above.")
+                continue
+
             with st.expander("Fine tune timestamp and crop", expanded=step_index == 0):
                 selected_index = list(available_paths).index(current)
                 manual_choice = st.selectbox(
@@ -618,7 +653,7 @@ def render_frame_selection(
                         + (" — Recommended" if options[value] is recommendations[0] else "")
                     ),
                     key=f"manual-frame-{project.project_id}-{step_index}",
-                    help="Choose any candidate assigned to this recipe step.",
+                    help="Choose any candidate manually; no semantic match is inferred.",
                 )
                 project.selections[str(step_index)] = manual_choice
                 current = manual_choice
@@ -799,29 +834,94 @@ def render_frame_finder_analysis(
     if project.source_title:
         render_source_card(project, video_path)
     if video_path:
-        with st.expander("Preview source video"):
-            st.video(str(video_path))
+        try:
+            source_duration = video_duration(video_path)
+        except FFmpegError as error:
+            st.error(str(error))
+            return
+        current_end = min(project.analysis_end or source_duration, source_duration)
+        current_start = min(project.analysis_start, max(0.0, current_end - 0.1))
+        with st.expander("Preview and mark the cooking range", expanded=True):
+            preview_time = st.number_input(
+                "Preview timestamp (seconds)",
+                min_value=0.0,
+                max_value=float(source_duration),
+                value=float(current_start),
+                step=0.25,
+                help="Enter a timestamp to restart the preview there, then mark it as the cooking start or end.",
+            )
+            st.video(str(video_path), start_time=int(preview_time))
+            start_button, end_button = st.columns(2)
+            with start_button:
+                if st.button("Start cooking here", use_container_width=True):
+                    if preview_time >= current_end:
+                        st.error("The cooking start must be before the end.")
+                    else:
+                        project.analysis_start = float(preview_time)
+                        store.save(project)
+                        set_flash("success", f"Cooking starts at {format_timestamp(preview_time)}.")
+                        st.rerun()
+            with end_button:
+                if st.button("End cooking here", use_container_width=True):
+                    if preview_time <= current_start:
+                        st.error("The cooking end must be after the start.")
+                    else:
+                        project.analysis_end = float(preview_time)
+                        store.save(project)
+                        set_flash("success", f"Cooking ends at {format_timestamp(preview_time)}.")
+                        st.rerun()
         with st.container(border=True):
             st.markdown("**Burst-frame analysis**")
             st.caption(
                 "For each promising scene, Platter checks approximately −0.5, −0.25, 0, +0.25, and +0.5 seconds, then rejects blur, poor exposure, transitions, and duplicates."
             )
+            range_start, range_end = st.columns(2)
+            with range_start:
+                analysis_start = st.number_input(
+                    "Analysis start (seconds)",
+                    min_value=0.0,
+                    max_value=max(0.0, float(source_duration) - 0.1),
+                    value=float(current_start),
+                    step=0.25,
+                )
+            with range_end:
+                analysis_end = st.number_input(
+                    "Analysis end (seconds)",
+                    min_value=0.1,
+                    max_value=float(source_duration),
+                    value=float(current_end),
+                    step=0.25,
+                )
+            st.caption(
+                "Cooking-scene detection runs only inside this range. Frames before and after it remain available separately for optional cover or closing use."
+            )
             st.metric("Target gallery size", f"About {project.target_slide_count} frames")
             label = "Refresh frame recommendations" if has_candidates else "Find recommended frames"
             if st.button(label, type="primary", use_container_width=True):
+                if analysis_start >= analysis_end:
+                    st.error("Analysis start must be before analysis end.")
+                    return
                 try:
+                    project.analysis_start = float(analysis_start)
+                    project.analysis_end = float(analysis_end)
                     with st.spinner("Detecting scenes and ranking frame bursts…"):
                         found = extract_frame_finder_candidates(
                             video_path,
                             store.candidates_dir(project),
                             project.target_slide_count,
+                            start_time=project.analysis_start,
+                            end_time=project.analysis_end,
                         )
                     project.frame_order = [
                         str((store.candidates_dir(project) / item.path).relative_to(store.project_dir(project.project_id)))
                         for item in found
+                        if item.in_analysis_range
                     ]
                     project.frame_texts = {}
                     project.frame_crops = {}
+                    project.frame_roles = {
+                        path: "recipe" for path in project.frame_order
+                    }
                     store.save(project)
                     st.session_state[f"stage-{project.project_id}"] = 3
                     set_flash("success", f"Frame Finder retained {len(found)} scene recommendations.")
@@ -883,6 +983,8 @@ def render_frame_finder_gallery(
         "Recommendations are chronological. Select, remove, reorder, and crop them before continuing.",
     )
     ordered_candidates = sorted(candidates, key=lambda item: item.timestamp)
+    cooking_candidates = [item for item in ordered_candidates if item.in_analysis_range]
+    outside_candidates = [item for item in ordered_candidates if not item.in_analysis_range]
     candidate_paths = {
         str((candidates_dir / item.path).relative_to(project_dir)): item
         for item in ordered_candidates
@@ -891,10 +993,13 @@ def render_frame_finder_gallery(
         path for path in project.frame_order if path in candidate_paths and (project_dir / path).exists()
     ]
 
-    st.markdown("### Recommended scenes")
-    for row_start in range(0, len(ordered_candidates), 3):
+    st.info(
+        "Quality scores measure visual clarity—sharpness, exposure, stability, uniqueness, and crop quality. They do not measure semantic agreement with an instruction."
+    )
+    st.markdown("### Recommended cooking scenes")
+    for row_start in range(0, len(cooking_candidates), 3):
         columns = st.columns(3, gap="medium")
-        for column, candidate in zip(columns, ordered_candidates[row_start : row_start + 3]):
+        for column, candidate in zip(columns, cooking_candidates[row_start : row_start + 3]):
             relative_path = str((candidates_dir / candidate.path).relative_to(project_dir))
             selected = relative_path in project.frame_order
             sharpness, quality = _frame_scores(candidate, ordered_candidates)
@@ -917,6 +1022,35 @@ def render_frame_finder_gallery(
                         store.save(project)
                         st.rerun()
 
+    if outside_candidates:
+        st.markdown("### Optional frames outside the cooking range")
+        st.caption("Use these separately as a cover or closing frame; they are not cooking-scene recommendations.")
+        columns = st.columns(min(3, len(outside_candidates)), gap="medium")
+        for column, candidate in zip(columns, outside_candidates):
+            relative_path = str((candidates_dir / candidate.path).relative_to(project_dir))
+            selected = relative_path in project.frame_order
+            default_role = "cover" if candidate.timestamp < project.analysis_start else "closing"
+            sharpness, quality = _frame_scores(candidate, ordered_candidates)
+            with column:
+                with st.container(border=True):
+                    render_candidate_heading(recommended=False, selected=selected)
+                    st.image(str(candidates_dir / candidate.path), use_container_width=True)
+                    st.markdown(f"**{format_timestamp(candidate.timestamp)} · {default_role.title()} option**")
+                    st.caption(f"Sharpness {sharpness}/100 · Overall quality {quality}/100")
+                    action = "Remove from selection" if selected else f"Add as {default_role}"
+                    if st.button(
+                        action,
+                        key=f"outside-toggle-{project.project_id}-{candidate.path}",
+                        use_container_width=True,
+                    ):
+                        if selected:
+                            project.frame_order.remove(relative_path)
+                        else:
+                            project.frame_order.append(relative_path)
+                            project.frame_roles[relative_path] = default_role
+                        store.save(project)
+                        st.rerun()
+
     st.markdown("### Selected sequence")
     if not project.frame_order:
         st.warning("Select at least one recommended frame to continue.")
@@ -930,6 +1064,20 @@ def render_frame_finder_gallery(
                 st.markdown(f"**{index + 1:02d} · {format_timestamp(candidate.timestamp)}**")
                 sharpness, quality = _frame_scores(candidate, ordered_candidates)
                 st.caption(f"Sharpness {sharpness}/100 · Overall quality {quality}/100")
+                role_values = ["cover", "recipe", "closing"]
+                role_labels = {
+                    "cover": "Cover",
+                    "recipe": "Recipe step",
+                    "closing": "Closing",
+                }
+                current_role = project.frame_roles.get(relative_path, "recipe")
+                project.frame_roles[relative_path] = st.selectbox(
+                    "Frame type",
+                    role_values,
+                    index=role_values.index(current_role),
+                    format_func=lambda value: role_labels[value],
+                    key=f"finder-role-{project.project_id}-{candidate.path}",
+                )
             with actions:
                 up, down = st.columns(2)
                 with up:
@@ -940,10 +1088,7 @@ def render_frame_finder_gallery(
                         help="Move frame earlier",
                         use_container_width=True,
                     ):
-                        project.frame_order[index - 1], project.frame_order[index] = (
-                            project.frame_order[index],
-                            project.frame_order[index - 1],
-                        )
+                        project.frame_order = move_frame(project.frame_order, index, -1)
                         store.save(project)
                         st.rerun()
                 with down:
@@ -954,10 +1099,7 @@ def render_frame_finder_gallery(
                         help="Move frame later",
                         use_container_width=True,
                     ):
-                        project.frame_order[index + 1], project.frame_order[index] = (
-                            project.frame_order[index],
-                            project.frame_order[index + 1],
-                        )
+                        project.frame_order = move_frame(project.frame_order, index, 1)
                         store.save(project)
                         st.rerun()
                 if st.button(
@@ -1031,7 +1173,9 @@ def build_frame_finder_review(
         else:
             with Image.open(project_dir / relative_path) as source:
                 image = crop_frame(source, x_position=x_position, y_position=y_position)
-        items.append((f"Frame {index:02d}", image))
+        role = project.frame_roles.get(relative_path, "recipe")
+        role_label = {"cover": "Cover", "recipe": "Recipe step", "closing": "Closing"}[role]
+        items.append((f"{index:02d} · {role_label}", image))
     return items
 
 
@@ -1041,21 +1185,64 @@ def render_frame_finder_export(project: Project, project_dir: Path) -> None:
         "Add optional text and export",
         "Export clean portrait frames for editing elsewhere, or add one instruction to each selected frame.",
     )
+    st.markdown("### Ordered frame editor")
+    st.caption(
+        "Instructions are optional. Frames stay untitled until you enter text, and your chosen order remains the export order."
+    )
+    role_values = ["cover", "recipe", "closing"]
+    role_labels = {"cover": "Cover", "recipe": "Recipe step", "closing": "Closing"}
+    for index, relative_path in enumerate(project.frame_order, 1):
+        with st.container(border=True):
+            image_column, editor_column = st.columns([1, 2], gap="large")
+            with image_column:
+                st.image(str(project_dir / relative_path), use_container_width=True)
+                st.caption(f"Frame {index:02d}")
+            with editor_column:
+                current_role = project.frame_roles.get(relative_path, "recipe")
+                project.frame_roles[relative_path] = st.selectbox(
+                    "Frame type",
+                    role_values,
+                    index=role_values.index(current_role),
+                    format_func=lambda value: role_labels[value],
+                    key=f"finder-export-role-{project.project_id}-{relative_path}",
+                )
+                project.frame_texts[relative_path] = st.text_input(
+                    "Optional instruction",
+                    value=project.frame_texts.get(relative_path, ""),
+                    placeholder="Add text only when this frame needs an instruction",
+                    key=f"finder-text-{project.project_id}-{relative_path}",
+                )
+                earlier, later = st.columns(2)
+                with earlier:
+                    if st.button(
+                        "Move earlier",
+                        key=f"finder-export-up-{project.project_id}-{index}",
+                        disabled=index == 1,
+                        use_container_width=True,
+                    ):
+                        project.frame_order = move_frame(project.frame_order, index - 1, -1)
+                        store.save(project)
+                        st.rerun()
+                with later:
+                    if st.button(
+                        "Move later",
+                        key=f"finder-export-down-{project.project_id}-{index}",
+                        disabled=index == len(project.frame_order),
+                        use_container_width=True,
+                    ):
+                        project.frame_order = move_frame(project.frame_order, index - 1, 1)
+                        store.save(project)
+                        st.rerun()
+
+    store.save(project)
+
     export_mode = st.radio(
         "Export style",
         ["Clean frames — no text", "Frames with instructions"],
         horizontal=True,
+        help="Clean export ignores saved instructions without deleting them.",
     )
     include_text = export_mode == "Frames with instructions"
-    if include_text:
-        st.caption("Instructions are optional. A blank instruction exports that frame without an overlay.")
-        for index, relative_path in enumerate(project.frame_order, 1):
-            project.frame_texts[relative_path] = st.text_input(
-                f"Instruction for frame {index}",
-                value=project.frame_texts.get(relative_path, ""),
-                placeholder="Optional cooking instruction",
-                key=f"finder-text-{project.project_id}-{relative_path}",
-            )
     render_review_grid(build_frame_finder_review(project, project_dir, include_text))
 
     with st.container(border=True):
@@ -1259,6 +1446,8 @@ else:
     if requested_stage and requested_stage != current_stage:
         st.session_state[stage_key] = requested_stage
         st.rerun()
+    st.write("")
+    render_conversion_banner(project, bool(candidates))
     st.write("")
     if current_stage == 1:
         render_recipe_details(project)

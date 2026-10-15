@@ -95,3 +95,27 @@ def test_frame_finder_exports_clean_frames_without_text(tmp_path: Path) -> None:
         assert image.size == SLIDE_SIZE
         center = image.getpixel((SLIDE_SIZE[0] // 2, SLIDE_SIZE[1] // 2))
         assert center[1] > center[0]
+
+
+def test_frame_finder_instruction_is_optional(tmp_path: Path) -> None:
+    candidates = tmp_path / "candidates"
+    candidates.mkdir()
+    Image.new("RGB", (1600, 900), (40, 90, 150)).save(candidates / "frame.jpg")
+    project = Project(
+        "optional-text",
+        "Frame Finder",
+        "",
+        [],
+        workflow_mode="frame_finder",
+        frame_order=["candidates/frame.jpg"],
+        frame_roles={"candidates/frame.jpg": "cover"},
+    )
+
+    outputs = export_frame_finder_project(
+        project, tmp_path, tmp_path / "exports", include_text=True
+    )
+
+    assert [path.name for path in outputs] == ["01-frame.png"]
+    with Image.open(outputs[0]) as image:
+        assert image.size == SLIDE_SIZE
+        assert image.getpixel((540, 100))[2] > image.getpixel((540, 100))[0]

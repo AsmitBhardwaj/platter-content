@@ -9,6 +9,7 @@ from recipe_slides.candidates import (
     crop_box,
     crop_frame,
     rank_burst_frames,
+    move_frame,
     rank_candidates,
     remove_duplicates,
     select_frame_finder_output,
@@ -130,6 +131,15 @@ def test_frame_finder_output_is_chronological_after_quality_selection() -> None:
     selected = select_frame_finder_output(values, 2)
 
     assert [item.timestamp for item in selected] == [10.0, 30.0]
+
+
+def test_frame_first_ordering_is_user_controlled() -> None:
+    original = ["cover.jpg", "mix.jpg", "serve.jpg"]
+
+    reordered = move_frame(original, 2, -1)
+
+    assert reordered == ["cover.jpg", "serve.jpg", "mix.jpg"]
+    assert original == ["cover.jpg", "mix.jpg", "serve.jpg"]
 
 
 def test_crop_position_moves_portrait_window_horizontally() -> None:

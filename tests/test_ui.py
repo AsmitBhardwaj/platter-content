@@ -69,6 +69,8 @@ def test_all_four_workflow_stages_render_without_exceptions(tmp_path: Path, monk
     frame_app = run_app()
     assert_stage(frame_app, "Select frames")
     assert "Quality" in " ".join(item.value for item in frame_app.markdown)
+    assert "No frame is assigned yet" in " ".join(item.value for item in frame_app.info)
+    assert "Convert to Frame Finder" in [item.label for item in frame_app.button]
 
     project.selections["0"] = "candidates/frame-0001.jpg"
     project.crop_positions["0"] = {"x": 0.5, "y": 0.5}
@@ -100,4 +102,6 @@ def test_frame_finder_gallery_and_export_stages_render(tmp_path: Path, monkeypat
     store.save(project)
     export_app = run_app()
     assert_stage(export_app, "Add optional text and export")
+    assert "Optional instruction" in [item.label for item in export_app.text_input]
+    assert "Move later" in [item.label for item in export_app.button]
     assert "Export frames" in [item.label for item in export_app.button]

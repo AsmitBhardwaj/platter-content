@@ -208,6 +208,33 @@ def select_frame_finder_output(
     return sorted(best, key=lambda item: item.timestamp)
 
 
+def rank_by_visual_clarity(candidates: list[FrameCandidate]) -> list[FrameCandidate]:
+    """Rank without inferring any semantic relationship to recipe instructions."""
+    if not candidates:
+        return []
+    sharpness_range = (
+        min(item.sharpness for item in candidates),
+        max(item.sharpness for item in candidates),
+    )
+    return sorted(
+        candidates,
+        key=lambda item: frame_finder_quality_score(
+            item, sharpness_range=sharpness_range
+        ),
+        reverse=True,
+    )
+
+
+def move_frame(order: list[str], index: int, offset: int) -> list[str]:
+    """Return a copy with one selected frame moved earlier or later."""
+    destination = index + offset
+    if index < 0 or index >= len(order) or destination < 0 or destination >= len(order):
+        return list(order)
+    moved = list(order)
+    moved[index], moved[destination] = moved[destination], moved[index]
+    return moved
+
+
 def remove_duplicates(
     candidates: list[FrameCandidate], *, max_hash_distance: int = 7
 ) -> list[FrameCandidate]:
