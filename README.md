@@ -37,9 +37,9 @@ Open the local URL printed by Streamlit (normally `http://localhost:8501`). Use 
 ## Frame Finder workflow
 
 1. **Video setup** — paste a YouTube URL and choose the approximate number of slides. No title, episode, or placeholder recipe steps are required.
-2. **Find frames** — FFmpeg detects scene changes. Around the stable midpoint of each scene, Platter extracts a five-frame burst at approximately −0.5, −0.25, 0, +0.25, and +0.5 seconds. It rejects near-black, overexposed, severely blurred, transitional, and duplicate frames, then keeps the strongest representative from each useful scene.
-3. **Refine gallery** — review recommendations in chronological order with normalized sharpness and overall-quality scores. Add or remove frames, move selected frames earlier or later, and fine-tune each 1080×1440 crop.
-4. **Text & export** — export clean numbered PNG frames with no text, or optionally enter one instruction for each selected frame. The ZIP download contains only the selected frames in the chosen order.
+2. **Find frames** — preview the video and use **Start cooking here** and **End cooking here**, or enter exact start and end timestamps, to define the cooking range. FFmpeg detects scenes only inside that range. Around each stable scene midpoint, Platter extracts a five-frame burst at approximately −0.5, −0.25, 0, +0.25, and +0.5 seconds. It rejects near-black, overexposed, severely blurred, transitional, and duplicate frames, then keeps the strongest representative from each useful scene. Representative frames before and after the range remain separate as optional cover and closing choices.
+3. **Refine gallery** — review cooking recommendations in chronological order with normalized sharpness and overall-quality scores. These scores describe visual clarity, not whether a frame matches an instruction. Add or remove frames, classify each as **Cover**, **Recipe step**, or **Closing**, move selected frames earlier or later, and fine-tune each 1080×1440 crop.
+4. **Text & export** — use the ordered editor to add an optional instruction to any selected frame. A frame has no step title until you explicitly enter one. Reorder frames again if needed, then export clean numbered PNG frames or slides with the saved instructions. Clean export ignores saved text without deleting it, and the ZIP follows the chosen frame order.
 
 Frame Finder ranks burst frames using sharpness, exposure, scene stability, and portrait crop quality. Final scene representatives also incorporate visual uniqueness, and the strongest requested number is returned chronologically. The requested slide count is approximate because unusable or duplicate scenes are intentionally omitted.
 
@@ -47,17 +47,19 @@ Frame Finder ranks burst frames using sharpness, exposure, scene stability, and 
 
 1. **Recipe details** — enter the title, episode, ordered recipe steps, cover label, closing message, and existing slide text-color setting.
 2. **Video source** — choose **YouTube link** or **Local upload**, review the compact source status card, and run scene analysis. A YouTube download retrieves the best video-only MP4 up to 1080p, plus its title and thumbnail when available.
-3. **Select frames** — work through one numbered recipe-step card at a time. Each card presents up to three ranked recommendations with timestamps, quality scores, a restrained recommended badge, and an explicit selected state. Open **Fine tune timestamp and crop** to extract nearby frames, choose from all frames assigned to that step, adjust the portrait crop, and inspect its final 1080×1440 preview.
+3. **Select frames** — work through one numbered recipe-step card at a time. Recommendations are ranked only for visual clarity; they are not assigned from equal timeline partitions and do not claim to match the instruction. Nothing is selected automatically. Choose each frame explicitly, then open **Fine tune timestamp and crop** to extract nearby alternatives, adjust the portrait crop, and inspect its final 1080×1440 preview.
 4. **Review & export** — inspect the cover, every numbered step slide, and the closing slide in a responsive review grid. **Export slideshow** renders the PNG set; the ZIP download appears as the final success state.
 
-## Frame-selection behavior
+Existing Recipe Steps projects show a **Convert to Frame Finder** action. Conversion preserves the source video, downloaded metadata, generated candidate images, and original recipe text for compatibility. It clears automatic step-to-frame associations so you can build a deliberate frame order first and add only the instructions you want afterward.
 
-1. Select how many frames to sample from each detected scene and click **Generate candidate frames**. FFmpeg detects cuts, and the app samples the stable middle portion of every scene. It automatically takes extra samples when the recipe has many steps.
-2. Dark, overexposed, motion-blurred, and visually duplicate images are removed. The remaining frames are divided into chronological, non-overlapping groups so an early recipe step cannot silently default to the end of the video.
-3. For each step, review the three highest-ranked frames. Rankings combine sharpness, exposure, visual uniqueness, proximity to the step's expected time, and suitability for a portrait crop. Each option displays its video timestamp, and the strongest is marked **Recommended**.
-4. Keep the recommendation, use a candidate card's selection control, or manually choose another frame from that step's chronological group. The manual selection is always the frame used for export.
-5. Use **Before 3s** or **After 3s** to extract a nearby alternative from any recommendation. This requires the source video to remain cached.
-6. Adjust the horizontal and vertical crop-position controls while checking the per-step 1080×1440 preview. Save the choices, review the full slideshow, then export and download the PNG set.
+## Analysis and selection behavior
+
+1. Set the cooking range before extraction. Scene detection and cooking recommendations are bounded by those timestamps, preventing finished-dish intros or unrelated outros from being mixed into the cooking gallery.
+2. Platter samples stable scene interiors and short bursts, then rejects dark, overexposed, motion-blurred, transitional, and visually duplicate images.
+3. Rankings combine sharpness, exposure, visual uniqueness, scene stability, and portrait crop quality. They measure image quality only; written instructions are never used as a semantic matching signal.
+4. Frame Finder starts with a chronological recommendation gallery, but the selected order is entirely user-controlled. Frames outside the cooking range can be added separately as cover or closing images.
+5. Recipe Steps mode also requires an explicit manual selection for every instruction. It never silently defaults an early instruction to a late-video frame.
+6. Nearby-frame extraction and horizontal/vertical crop controls continue to work while the source video is cached. Both clean-frame and text-overlay exports use the saved manual order and crop positions.
 
 ## Interface theme
 
@@ -75,7 +77,7 @@ For a custom typeface, set `RECIPE_SLIDES_FONT` to the path of a `.ttf` file bef
 pytest
 ```
 
-The test suite covers both Streamlit workflows, burst-frame ranking, chronological Frame Finder output, frame-only project persistence, clean export without text, scene sampling, exposure and blur scoring, duplicate removal, chronological recipe-step assignment, ranking, crop positioning, timestamp boundaries, measured text wrapping, final slide dimensions/PNG rendering, YouTube URL and cache identity, progress reporting, metadata handling, cleanup behavior, and user-facing download errors. YouTube tests use fake downloaders and make no network requests.
+The test suite covers both Streamlit workflows, analysis-range clipping, legacy-project conversion, burst-frame ranking, user-controlled ordering, chronological Frame Finder output, optional instructions, frame-only project persistence, clean export without text, scene sampling, exposure and blur scoring, duplicate removal, visual-quality ranking, crop positioning, timestamp boundaries, measured text wrapping, final slide dimensions/PNG rendering, YouTube URL and cache identity, progress reporting, metadata handling, cleanup behavior, and user-facing download errors. YouTube tests use fake downloaders and make no network requests.
 
 ## Project layout
 
@@ -83,7 +85,7 @@ The test suite covers both Streamlit workflows, burst-frame ranking, chronologic
 app.py                       Streamlit workflow
 recipe_slides/ui.py          Reusable studio layout, navigation, cards, and review-grid helpers
 recipe_slides/ffmpeg.py      Video probing and frame extraction
-recipe_slides/candidates.py  Frame scoring, deduplication, assignment, ranking, and cropping
+recipe_slides/candidates.py  Frame scoring, deduplication, ordering, ranking, and cropping
 recipe_slides/youtube.py     YouTube validation, yt-dlp download, and error mapping
 recipe_slides/rendering.py   Text wrapping and 1080×1440 slide rendering
 recipe_slides/storage.py     Local JSON project and media storage
