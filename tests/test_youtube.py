@@ -139,6 +139,5 @@ def test_download_returns_local_video_title_and_thumbnail(tmp_path: Path) -> Non
     assert captured_options["format"] == DOWNLOAD_FORMAT
     assert "+ba[" in DOWNLOAD_FORMAT and DOWNLOAD_FORMAT.endswith("/b")
     assert captured_options["merge_output_format"] == "mp4"
-    assert "merge_output_format" not in captured_options
     assert progress_updates[-1] == (1.0, "Download complete")
-    assert any("video-only" in message for _, message in progress_updates)
+    assert any("Downloading video" in message for _, message in progress_updates)
