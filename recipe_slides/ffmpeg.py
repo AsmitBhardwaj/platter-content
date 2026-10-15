@@ -7,6 +7,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .analysis_settings import (
+    RELAXATION_LEVELS,
+    AnalysisSettings,
+    load_settings,
+    settings_to_dict,
+)
 from .candidates import (
     FrameCandidate,
     acceptable,
@@ -74,13 +80,15 @@ def clip_scenes_to_range(
 def detect_scenes(
     video_path: Path,
     duration: float,
-    threshold: float = 0.30,
+    threshold: float | None = None,
     *,
     start_time: float = 0.0,
     end_time: float | None = None,
 ) -> list[tuple[float, float]]:
     """Detect scene boundaries with FFmpeg's scene score filter."""
     start, end = validate_analysis_range(duration, start_time, end_time)
+    if threshold is None:
+        threshold = AnalysisSettings().scene_threshold
     if start == 0.0 and end == duration:
         video_filter = f"select='gt(scene,{threshold})',showinfo"
         time_offset = 0.0
@@ -136,35 +144,114 @@ def extract_frame(video_path: Path, destination: Path, timestamp: float) -> Path
     return destination
 
 
+def _acceptable(candidate: FrameCandidate, config: AnalysisSettings) -> bool:
+    return acceptable(
+        candidate,
+        min_sharpness=config.min_sharpness,
+        min_brightness=config.min_brightness,
+        max_brightness=config.max_brightness,
+    )
+
+
 def extract_candidate_frames(
-    video_path: Path, output_dir: Path, samples_per_scene: int = 3, step_count: int = 1
+    video_path: Path,
+    output_dir: Path,
+    samples_per_scene: int = 3,
+    step_count: int = 1,
+    settings: AnalysisSettings | None = None,
 ) -> list[FrameCandidate]:
     if not tools_available():
         raise FFmpegError("FFmpeg and ffprobe must be installed and available on PATH")
+    config = settings or load_settings()
     output_dir.mkdir(parents=True, exist_ok=True)
     for old_frame in output_dir.glob("frame-*.jpg"):
         old_frame.unlink()
 
     duration = video_duration(video_path)
-    scenes = detect_scenes(video_path, duration)
+    scenes = detect_scenes(video_path, duration, config.scene_threshold)
     samples_per_scene = max(samples_per_scene, math.ceil(step_count * 4 / max(1, len(scenes))))
     analyzed: list[FrameCandidate] = []
     for index, (timestamp, scene) in enumerate(scene_sample_timestamps(scenes, samples_per_scene), 1):
         destination = output_dir / f"frame-{index:04d}-{timestamp:010.3f}.jpg"
         extract_frame(video_path, destination, timestamp)
-        candidate = analyze_frame(destination, timestamp, scene)
-        if acceptable(candidate):
-            analyzed.append(candidate)
-        else:
-            destination.unlink(missing_ok=True)
-    candidates = remove_duplicates(analyzed)
+        analyzed.append(analyze_frame(destination, timestamp, scene))
+
+    used = config
+    accepted: list[FrameCandidate] = []
+    for level in range(RELAXATION_LEVELS + 1):
+        used = config.relaxed(level)
+        accepted = [item for item in analyzed if _acceptable(item, used)]
+        if accepted:
+            break
+    candidates = remove_duplicates(accepted, max_hash_distance=used.max_hash_distance)
     kept = {item.path for item in candidates}
     for item in analyzed:
         if item.path not in kept:
             (output_dir / item.path).unlink(missing_ok=True)
-    save_manifest(output_dir / "manifest.json", candidates, duration)
+    save_manifest(
+        output_dir / "manifest.json",
+        candidates,
+        duration,
+        {"mode": "scenes", "settings": settings_to_dict(used), "relaxed": used != config},
+    )
     return candidates
+
+
 BURST_OFFSETS = (-0.5, -0.25, 0.0, 0.25, 0.5)
+
+
+def _extract_burst(
+    video_path: Path,
+    output_dir: Path,
+    *,
+    label: str,
+    center: float,
+    window: tuple[float, float],
+    duration: float,
+    in_range: bool,
+    extracted_paths: list[Path],
+) -> list[FrameCandidate]:
+    """Extract and analyze a five-frame burst around ``center`` inside ``window``."""
+    start, end = window
+    burst: list[FrameCandidate] = []
+    used_timestamps: set[float] = set()
+    for burst_index, offset in enumerate(BURST_OFFSETS, 1):
+        timestamp = min(max(center + offset, start + 0.04), end - 0.04)
+        timestamp = min(max(0.0, timestamp), max(0.0, duration - 0.05))
+        rounded = round(timestamp, 3)
+        if rounded in used_timestamps:
+            continue
+        used_timestamps.add(rounded)
+        destination = output_dir / f"frame-{label}-{burst_index}-{timestamp:010.3f}.jpg"
+        if destination in extracted_paths:
+            continue
+        extract_frame(video_path, destination, timestamp)
+        extracted_paths.append(destination)
+        candidate = analyze_frame(destination, timestamp, window)
+        candidate.in_analysis_range = in_range
+        boundary_distance = min(timestamp - start, end - timestamp)
+        candidate.stability = min(1.0, max(0.0, boundary_distance / 0.5))
+        burst.append(candidate)
+    return burst
+
+
+def interval_windows(
+    start: float, end: float, interval: float
+) -> list[tuple[float, tuple[float, float]]]:
+    """Return (center, window) pairs spaced ``interval`` seconds across a range."""
+    windows: list[tuple[float, tuple[float, float]]] = []
+    position = start
+    while position < end - 0.05:
+        window_end = min(end, position + interval)
+        if window_end - position >= 0.5:
+            windows.append(((position + window_end) / 2, (position, window_end)))
+        position += interval
+    return windows
+
+
+def _best(burst: list[FrameCandidate], config: AnalysisSettings) -> FrameCandidate | None:
+    ranked = rank_burst_frames(burst, config)
+    return ranked[0] if ranked else None
 
 
 def extract_frame_finder_candidates(
@@ -174,12 +261,20 @@ def extract_frame_finder_candidates(
     *,
     start_time: float = 0.0,
     end_time: float | None = None,
+    settings: AnalysisSettings | None = None,
 ) -> list[FrameCandidate]:
-    """Extract a burst around each scene midpoint and retain its clearest frame."""
+    """Extract a burst around each scene midpoint and retain its clearest frame.
+
+    When scene detection finds fewer than ``settings.min_scene_frames`` usable
+    frames (for example one continuous shot), interval sampling adds bursts every
+    ``settings.fallback_interval`` seconds. If every frame is rejected, the
+    thresholds are relaxed step by step instead of returning an empty gallery.
+    """
     if not tools_available():
         raise FFmpegError("FFmpeg and ffprobe must be installed and available on PATH")
     if target_count < 1:
         raise ValueError("target_count must be positive")
+    config = settings or load_settings()
     output_dir.mkdir(parents=True, exist_ok=True)
     for old_frame in output_dir.glob("frame-*.jpg"):
         old_frame.unlink()
@@ -189,41 +284,65 @@ def extract_frame_finder_candidates(
     scenes = detect_scenes(
         video_path,
         duration,
+        config.scene_threshold,
         start_time=analysis_start,
         end_time=analysis_end,
     )
-    representatives: list[FrameCandidate] = []
     extracted_paths: list[Path] = []
+    scene_bursts: list[list[FrameCandidate]] = []
     for scene_index, scene in enumerate(scenes, 1):
-        start, end = scene
-        scene_duration = end - start
-        if scene_duration < 0.5:
+        if scene[1] - scene[0] < 0.5:
             continue
-        midpoint = (start + end) / 2
-        burst: list[FrameCandidate] = []
-        used_timestamps: set[float] = set()
-        for burst_index, offset in enumerate(BURST_OFFSETS, 1):
-            timestamp = min(max(midpoint + offset, start + 0.04), end - 0.04)
-            timestamp = min(max(0.0, timestamp), max(0.0, duration - 0.05))
-            rounded = round(timestamp, 3)
-            if rounded in used_timestamps:
-                continue
-            used_timestamps.add(rounded)
-            destination = output_dir / (
-                f"frame-burst-{scene_index:04d}-{burst_index}-{timestamp:010.3f}.jpg"
+        scene_bursts.append(
+            _extract_burst(
+                video_path, output_dir, label=f"burst-{scene_index:04d}",
+                center=(scene[0] + scene[1]) / 2, window=scene, duration=duration,
+                in_range=True, extracted_paths=extracted_paths,
             )
-            extract_frame(video_path, destination, timestamp)
-            extracted_paths.append(destination)
-            candidate = analyze_frame(destination, timestamp, scene)
-            candidate.in_analysis_range = True
-            boundary_distance = min(timestamp - start, end - timestamp)
-            candidate.stability = min(1.0, max(0.0, boundary_distance / 0.5))
-            burst.append(candidate)
-        ranked_burst = rank_burst_frames(burst)
-        if ranked_burst:
-            representatives.append(ranked_burst[0])
+        )
 
-    candidates = select_frame_finder_output(representatives, target_count)
+    def pick(bursts: list[list[FrameCandidate]], level: int) -> list[FrameCandidate]:
+        relaxed = config.relaxed(level)
+        return [item for item in (_best(burst, relaxed) for burst in bursts) if item]
+
+    interval_bursts: list[list[FrameCandidate]] = []
+    mode = "scenes"
+    if len(pick(scene_bursts, 0)) < config.min_scene_frames:
+        mode = "interval-fallback"
+        for index, (center, window) in enumerate(
+            interval_windows(analysis_start, analysis_end, config.fallback_interval), 1
+        ):
+            interval_bursts.append(
+                _extract_burst(
+                    video_path, output_dir, label=f"interval-{index:04d}",
+                    center=center, window=window, duration=duration,
+                    in_range=True, extracted_paths=extracted_paths,
+                )
+            )
+
+    all_bursts = scene_bursts + interval_bursts
+    level = 0
+    representatives = pick(all_bursts, 0)
+    while not representatives and level < RELAXATION_LEVELS:
+        level += 1
+        representatives = pick(all_bursts, level)
+    used = config.relaxed(level)
+    hash_distance_used = used.max_hash_distance
+    candidates = select_frame_finder_output(
+        representatives, target_count, max_hash_distance=hash_distance_used
+    )
+    if mode == "interval-fallback":
+        # Interval samples are already spaced apart in time; a continuous shot
+        # can look identical to the perceptual hash, so loosen de-duplication
+        # (down to keeping every sample) rather than collapsing to one frame.
+        wanted = min(target_count, config.min_scene_frames)
+        for looser in (min(3, hash_distance_used), -1):
+            if len(candidates) >= wanted:
+                break
+            hash_distance_used = looser
+            candidates = select_frame_finder_output(
+                representatives, target_count, max_hash_distance=looser
+            )
 
     outside_ranges = []
     if analysis_start >= 0.5:
@@ -231,30 +350,29 @@ def extract_frame_finder_candidates(
     if duration - analysis_end >= 0.5:
         outside_ranges.append((analysis_end, duration, "closing"))
     for range_start, range_end, label in outside_ranges:
-        midpoint = (range_start + range_end) / 2
-        burst = []
-        for burst_index, offset in enumerate(BURST_OFFSETS, 1):
-            timestamp = min(max(midpoint + offset, range_start + 0.04), range_end - 0.04)
-            destination = output_dir / (
-                f"frame-outside-{label}-{burst_index}-{timestamp:010.3f}.jpg"
-            )
-            if destination in extracted_paths:
-                continue
-            extract_frame(video_path, destination, timestamp)
-            extracted_paths.append(destination)
-            candidate = analyze_frame(destination, timestamp, (range_start, range_end))
-            candidate.in_analysis_range = False
-            boundary_distance = min(timestamp - range_start, range_end - timestamp)
-            candidate.stability = min(1.0, max(0.0, boundary_distance / 0.5))
-            burst.append(candidate)
-        ranked = rank_burst_frames(burst)
-        if ranked:
-            candidates.append(ranked[0])
+        burst = _extract_burst(
+            video_path, output_dir, label=f"outside-{label}",
+            center=(range_start + range_end) / 2, window=(range_start, range_end),
+            duration=duration, in_range=False, extracted_paths=extracted_paths,
+        )
+        best = _best(burst, used)
+        if best:
+            candidates.append(best)
 
     candidates.sort(key=lambda item: item.timestamp)
     kept = {item.path for item in candidates}
     for path in extracted_paths:
         if path.name not in kept:
             path.unlink(missing_ok=True)
-    save_manifest(output_dir / "manifest.json", candidates, duration)
+    save_manifest(
+        output_dir / "manifest.json",
+        candidates,
+        duration,
+        {
+            "mode": mode,
+            "settings": settings_to_dict(used),
+            "relaxed": level > 0,
+            "dedupe_hash_distance": hash_distance_used,
+        },
+    )
     return candidates

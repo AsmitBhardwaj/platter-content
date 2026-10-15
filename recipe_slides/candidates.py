@@ -7,6 +7,8 @@ from pathlib import Path
 
 from PIL import Image, ImageFilter, ImageOps, ImageStat
 
+from .analysis_settings import AnalysisSettings
+
 
 @dataclass
 class FrameCandidate:
@@ -128,8 +130,17 @@ def analyze_frame(path: Path, timestamp: float, scene: tuple[float, float]) -> F
         )
 
 
-def acceptable(candidate: FrameCandidate, *, min_sharpness: float = 45.0) -> bool:
-    return 0.10 <= candidate.brightness <= 0.92 and candidate.sharpness >= min_sharpness
+def acceptable(
+    candidate: FrameCandidate,
+    *,
+    min_sharpness: float = 45.0,
+    min_brightness: float = 0.10,
+    max_brightness: float = 0.92,
+) -> bool:
+    return (
+        min_brightness <= candidate.brightness <= max_brightness
+        and candidate.sharpness >= min_sharpness
+    )
 
 
 def burst_frame_score(
@@ -150,9 +161,22 @@ def burst_frame_score(
     )
 
 
-def rank_burst_frames(candidates: list[FrameCandidate]) -> list[FrameCandidate]:
+def rank_burst_frames(
+    candidates: list[FrameCandidate], settings: AnalysisSettings | None = None
+) -> list[FrameCandidate]:
     """Reject unusable/transition frames and rank the remaining burst frames."""
-    usable = [item for item in candidates if acceptable(item) and item.stability >= 0.25]
+    config = settings or AnalysisSettings()
+    usable = [
+        item
+        for item in candidates
+        if acceptable(
+            item,
+            min_sharpness=config.min_sharpness,
+            min_brightness=config.min_brightness,
+            max_brightness=config.max_brightness,
+        )
+        and item.stability >= 0.25
+    ]
     if not usable:
         return []
     sharpness_range = (
@@ -186,12 +210,15 @@ def frame_finder_quality_score(
 
 
 def select_frame_finder_output(
-    candidates: list[FrameCandidate], target_count: int
+    candidates: list[FrameCandidate],
+    target_count: int,
+    *,
+    max_hash_distance: int = 7,
 ) -> list[FrameCandidate]:
     """Keep approximately the best requested number, always returning chronological output."""
     if target_count < 1:
         raise ValueError("target_count must be positive")
-    distinct = remove_duplicates(candidates)
+    distinct = remove_duplicates(candidates, max_hash_distance=max_hash_distance)
     if len(distinct) <= target_count:
         return sorted(distinct, key=lambda item: item.timestamp)
     sharpness_range = (
@@ -311,11 +338,19 @@ def candidate_quality_score(
     return min(1.0, max(0.0, score))
 
 
-def save_manifest(path: Path, candidates: list[FrameCandidate], duration: float) -> None:
-    path.write_text(
-        json.dumps({"duration": duration, "candidates": [asdict(item) for item in candidates]}, indent=2),
-        encoding="utf-8",
-    )
+def save_manifest(
+    path: Path,
+    candidates: list[FrameCandidate],
+    duration: float,
+    analysis: dict[str, object] | None = None,
+) -> None:
+    data: dict[str, object] = {
+        "duration": duration,
+        "candidates": [asdict(item) for item in candidates],
+    }
+    if analysis:
+        data["analysis"] = analysis
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def load_manifest(path: Path) -> tuple[float, list[FrameCandidate]]:
