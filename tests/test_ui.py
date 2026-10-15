@@ -76,7 +76,7 @@ def test_all_four_workflow_stages_render_without_exceptions(tmp_path: Path, monk
     project.crop_positions["0"] = {"x": 0.5, "y": 0.5}
     store.save(project)
     review_app = run_app()
-    assert_stage(review_app, "Review and export")
+    assert_stage(review_app, "Edit slides")
     assert "Export slideshow" in [item.label for item in review_app.button]
 
 
@@ -101,7 +101,5 @@ def test_frame_finder_gallery_and_export_stages_render(tmp_path: Path, monkeypat
     ]
     store.save(project)
     export_app = run_app()
-    assert_stage(export_app, "Add optional text and export")
-    assert "Optional instruction" in [item.label for item in export_app.text_input]
-    assert "Move later" in [item.label for item in export_app.button]
+    assert_stage(export_app, "Edit slides")
     assert "Export frames" in [item.label for item in export_app.button]

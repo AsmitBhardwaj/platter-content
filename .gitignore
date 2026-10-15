@@ -15,6 +15,9 @@ data/
 projects/
 exports/
 downloads/
+uploaded_fonts/
+**/fonts/uploads/
+slide_editor/frontend/node_modules/
 *.mp4
 *.mov
 *.m4v

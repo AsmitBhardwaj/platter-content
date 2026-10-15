@@ -29,6 +29,9 @@ from recipe_slides.ffmpeg import (
     video_duration,
 )
 from recipe_slides.models import Project
+from recipe_slides.editor import apply_editor_value, editor_payload, initialize_editor
+from recipe_slides.editor_rendering import export_editor_project
+from recipe_slides.fonts import resolve_font, save_uploaded_font
 from recipe_slides.rendering import (
     export_project,
     export_frame_finder_project,
@@ -56,6 +59,7 @@ from recipe_slides.youtube import (
     is_same_youtube_video,
     is_valid_youtube_url,
 )
+from slide_editor import slide_editor
 
 st.set_page_config(page_title="Platter Content Studio", page_icon="🍅", layout="wide")
 apply_studio_styles()
@@ -1365,6 +1369,93 @@ def render_review_and_export(project: Project, project_dir: Path) -> None:
         )
 
 
+def render_slide_editor(project: Project, project_dir: Path) -> None:
+    render_stage_heading(
+        4,
+        "Edit slides",
+        "Place any number of text layers directly on each 1080 × 1440 slide, then export the saved composition.",
+    )
+    if initialize_editor(project):
+        store.save(project)
+
+    unavailable: list[str] = []
+    for editor_slide in project.editor_slides:
+        for layer in editor_slide.layers:
+            _, warning = resolve_font(project_dir, layer.font_file, layer.font_family)
+            if warning and warning not in unavailable:
+                unavailable.append(warning)
+    for warning in unavailable:
+        st.warning(warning)
+
+    with st.expander("Upload a personal font"):
+        uploaded_font = st.file_uploader(
+            "TrueType or OpenType font",
+            type=["ttf", "otf"],
+            key=f"editor-font-{project.project_id}",
+            help="Fonts remain inside this local project and are excluded from Git.",
+        )
+        if st.button(
+            "Add font to editor",
+            disabled=uploaded_font is None,
+            key=f"save-font-{project.project_id}",
+        ):
+            try:
+                saved_font = save_uploaded_font(project_dir, uploaded_font, uploaded_font.name)
+                set_flash("success", f"Added {saved_font.stem} to this project.")
+                st.rerun()
+            except (OSError, ValueError) as error:
+                st.error(str(error))
+
+    selected_key = f"editor-selected-slide-{project.project_id}"
+    value = slide_editor(
+        editor_payload(project, project_dir),
+        selected_slide=int(st.session_state.get(selected_key, 0)),
+        key=f"slide-editor-{project.project_id}",
+    )
+    if value:
+        apply_editor_value(project, value)
+        selected = int(value.get("selected_slide", 0))
+        st.session_state[selected_key] = max(0, min(selected, len(project.editor_slides) - 1))
+        store.save(project)
+
+    with st.container(border=True):
+        st.markdown("### Ready to export")
+        st.caption(
+            f"Renders {len(project.editor_slides)} slides at 1080 × 1440 from the saved layer model. Slides without text stay clean."
+        )
+        export_label = "Export frames" if project.workflow_mode == "frame_finder" else "Export slideshow"
+        if st.button(export_label, type="primary", use_container_width=True):
+            try:
+                with st.spinner("Rendering saved layers at full resolution…"):
+                    outputs, font_warnings = export_editor_project(
+                        project.editor_slides, project_dir, store.export_dir(project)
+                    )
+                source_deleted = False
+                if project.settings.delete_source_after_export:
+                    source_deleted = store.clear_source_video(project)
+                message = f"Exported {len(outputs)} slides."
+                if source_deleted:
+                    message += " The cached source video was removed."
+                set_flash("success", message)
+                for warning in font_warnings:
+                    st.warning(warning)
+                st.rerun()
+            except (OSError, ValueError) as error:
+                st.error(f"Export failed: {error}")
+
+    current_exports = existing_export_paths(store.export_dir(project))
+    if current_exports:
+        st.success(f"Your latest package is ready — {len(current_exports)} PNG files.", icon="✅")
+        st.download_button(
+            "Download slides ZIP",
+            data=zip_files(current_exports),
+            file_name=f"{project.project_id}-slides.zip",
+            mime="application/zip",
+            type="primary",
+            use_container_width=True,
+        )
+
+
 projects = store.list_projects()
 forced_navigator = st.session_state.pop("force-project-navigator", None)
 if forced_navigator:
@@ -1426,7 +1517,7 @@ if project.workflow_mode == "frame_finder":
     elif current_stage == 3:
         render_frame_finder_gallery(project, project_dir, candidates, candidates_dir)
     else:
-        render_frame_finder_export(project, project_dir)
+        render_slide_editor(project, project_dir)
 else:
     complete_selection = selection_is_complete(project, project_dir)
     completed = {1}
@@ -1463,4 +1554,4 @@ else:
             candidates_dir,
         )
     else:
-        render_review_and_export(project, project_dir)
+        render_slide_editor(project, project_dir)

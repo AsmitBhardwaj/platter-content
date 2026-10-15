@@ -10,14 +10,14 @@ STAGES = (
     (1, "Recipe details"),
     (2, "Video source"),
     (3, "Select frames"),
-    (4, "Review & export"),
+    (4, "Edit slides"),
 )
 
 FRAME_FINDER_STAGES = (
     (1, "Video setup"),
     (2, "Find frames"),
     (3, "Refine gallery"),
-    (4, "Text & export"),
+    (4, "Edit slides"),
 )
 
 
