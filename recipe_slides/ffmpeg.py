@@ -46,17 +46,62 @@ def video_duration(video_path: Path) -> float:
         raise FFmpegError("Could not determine video duration") from error
 
 
-def detect_scenes(video_path: Path, duration: float, threshold: float = 0.30) -> list[tuple[float, float]]:
+def validate_analysis_range(
+    duration: float, start_time: float = 0.0, end_time: float | None = None
+) -> tuple[float, float]:
+    if duration <= 0:
+        raise ValueError("duration must be positive")
+    start = max(0.0, float(start_time))
+    end = duration if end_time is None else min(duration, float(end_time))
+    if start >= end:
+        raise ValueError("analysis start must be before analysis end")
+    return start, end
+
+
+def clip_scenes_to_range(
+    scenes: list[tuple[float, float]], start_time: float, end_time: float
+) -> list[tuple[float, float]]:
+    """Return only the portions of scenes that intersect an analysis range."""
+    clipped = []
+    for start, end in scenes:
+        clipped_start = max(start, start_time)
+        clipped_end = min(end, end_time)
+        if clipped_end - clipped_start >= 0.10:
+            clipped.append((clipped_start, clipped_end))
+    return clipped
+
+
+def detect_scenes(
+    video_path: Path,
+    duration: float,
+    threshold: float = 0.30,
+    *,
+    start_time: float = 0.0,
+    end_time: float | None = None,
+) -> list[tuple[float, float]]:
     """Detect scene boundaries with FFmpeg's scene score filter."""
+    start, end = validate_analysis_range(duration, start_time, end_time)
+    if start == 0.0 and end == duration:
+        video_filter = f"select='gt(scene,{threshold})',showinfo"
+        time_offset = 0.0
+    else:
+        video_filter = (
+            f"trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS,"
+            f"select='gt(scene,{threshold})',showinfo"
+        )
+        time_offset = start
     command = [
         "ffmpeg", "-hide_banner", "-loglevel", "info", "-i", str(video_path),
-        "-filter:v", f"select='gt(scene,{threshold})',showinfo", "-f", "null", "-",
+        "-filter:v", video_filter, "-f", "null", "-",
     ]
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode:
         raise FFmpegError(result.stderr.strip() or "FFmpeg could not detect scenes")
-    changes = [float(value) for value in re.findall(r"pts_time:([0-9]+(?:\.[0-9]+)?)", result.stderr)]
-    boundaries = [0.0] + [value for value in changes if 0.05 < value < duration - 0.05] + [duration]
+    changes = [
+        float(value) + time_offset
+        for value in re.findall(r"pts_time:([0-9]+(?:\.[0-9]+)?)", result.stderr)
+    ]
+    boundaries = [start] + [value for value in changes if start + 0.05 < value < end - 0.05] + [end]
     boundaries = sorted(set(boundaries))
     return [(start, end) for start, end in zip(boundaries, boundaries[1:]) if end - start >= 0.10]
 
@@ -126,6 +171,9 @@ def extract_frame_finder_candidates(
     video_path: Path,
     output_dir: Path,
     target_count: int,
+    *,
+    start_time: float = 0.0,
+    end_time: float | None = None,
 ) -> list[FrameCandidate]:
     """Extract a burst around each scene midpoint and retain its clearest frame."""
     if not tools_available():
@@ -137,7 +185,13 @@ def extract_frame_finder_candidates(
         old_frame.unlink()
 
     duration = video_duration(video_path)
-    scenes = detect_scenes(video_path, duration)
+    analysis_start, analysis_end = validate_analysis_range(duration, start_time, end_time)
+    scenes = detect_scenes(
+        video_path,
+        duration,
+        start_time=analysis_start,
+        end_time=analysis_end,
+    )
     representatives: list[FrameCandidate] = []
     extracted_paths: list[Path] = []
     for scene_index, scene in enumerate(scenes, 1):
@@ -161,6 +215,7 @@ def extract_frame_finder_candidates(
             extract_frame(video_path, destination, timestamp)
             extracted_paths.append(destination)
             candidate = analyze_frame(destination, timestamp, scene)
+            candidate.in_analysis_range = True
             boundary_distance = min(timestamp - start, end - timestamp)
             candidate.stability = min(1.0, max(0.0, boundary_distance / 0.5))
             burst.append(candidate)
@@ -169,6 +224,34 @@ def extract_frame_finder_candidates(
             representatives.append(ranked_burst[0])
 
     candidates = select_frame_finder_output(representatives, target_count)
+
+    outside_ranges = []
+    if analysis_start >= 0.5:
+        outside_ranges.append((0.0, analysis_start, "cover"))
+    if duration - analysis_end >= 0.5:
+        outside_ranges.append((analysis_end, duration, "closing"))
+    for range_start, range_end, label in outside_ranges:
+        midpoint = (range_start + range_end) / 2
+        burst = []
+        for burst_index, offset in enumerate(BURST_OFFSETS, 1):
+            timestamp = min(max(midpoint + offset, range_start + 0.04), range_end - 0.04)
+            destination = output_dir / (
+                f"frame-outside-{label}-{burst_index}-{timestamp:010.3f}.jpg"
+            )
+            if destination in extracted_paths:
+                continue
+            extract_frame(video_path, destination, timestamp)
+            extracted_paths.append(destination)
+            candidate = analyze_frame(destination, timestamp, (range_start, range_end))
+            candidate.in_analysis_range = False
+            boundary_distance = min(timestamp - range_start, range_end - timestamp)
+            candidate.stability = min(1.0, max(0.0, boundary_distance / 0.5))
+            burst.append(candidate)
+        ranked = rank_burst_frames(burst)
+        if ranked:
+            candidates.append(ranked[0])
+
+    candidates.sort(key=lambda item: item.timestamp)
     kept = {item.path for item in candidates}
     for path in extracted_paths:
         if path.name not in kept:

@@ -14,7 +14,11 @@ from recipe_slides.candidates import (
     select_frame_finder_output,
     sharpness_score,
 )
-from recipe_slides.ffmpeg import scene_sample_timestamps
+from recipe_slides.ffmpeg import (
+    clip_scenes_to_range,
+    scene_sample_timestamps,
+    validate_analysis_range,
+)
 
 
 def candidate(timestamp: float, **overrides: object) -> FrameCandidate:
@@ -39,6 +43,22 @@ def test_scene_sampling_uses_stable_middle_and_preserves_order() -> None:
 
     assert [round(item[0], 2) for item in samples] == [3.33, 5.0, 6.67, 16.67, 20.0, 23.33]
     assert all(scene[0] < timestamp < scene[1] for timestamp, scene in samples)
+
+
+def test_analysis_range_clips_scene_candidates() -> None:
+    scenes = [(0.0, 4.0), (4.0, 8.0), (8.0, 12.0)]
+
+    assert clip_scenes_to_range(scenes, 3.0, 9.0) == [
+        (3.0, 4.0),
+        (4.0, 8.0),
+        (8.0, 9.0),
+    ]
+    assert validate_analysis_range(12.0, 3.0, 20.0) == (3.0, 12.0)
+
+
+def test_analysis_range_rejects_reversed_boundaries() -> None:
+    with pytest.raises(ValueError, match="start must be before"):
+        validate_analysis_range(12.0, 9.0, 3.0)
 
 
 def test_brightness_scoring_rejects_extremes_in_favor_of_midtones() -> None:
