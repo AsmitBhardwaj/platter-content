@@ -4,6 +4,10 @@ A polished, local-first Streamlit workspace that turns a cooking video into sele
 
 YouTube downloads use yt-dlp and are saved only inside the selected project's private local data directory. The app downloads video with audio (capped at 1080p, with fallbacks for videos that lack separate MP4/M4A streams) and surfaces the real yt-dlp error if a download fails. Uploading a file is the default and most reliable option. Downloaded media, thumbnails, uploaded media, saved projects, extracted frames, exports, cookies, and credentials are excluded from Git. The app does not use account cookies. An optional OpenAI vision pass (below) drafts captions; it never runs without an API key.
 
+## Fridge Carousel Studio
+
+`fridge_carousel/index.html` is a standalone browser tool, separate from the Streamlit app, that builds 8-slide fridge-hook carousels for TikTok and Instagram. It generates the dish images with OpenAI. Open the file in Chrome. See `fridge_carousel/README.md`.
+
 ## Requirements
 
 - Python 3.11 or newer

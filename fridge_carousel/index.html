@@ -1,0 +1,608 @@
+<title>Fridge Carousel Studio</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Serif+Display&family=Figtree:wght@400;500;600;700;800&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+/* Layout: two-pane workbench — controls column on the left, live 8-slide strip on the right; stacks on phones. */
+:root{
+  --bg:#F3F5F1; --panel:#FFFFFF; --ink:#18201A; --muted:#5E6B60; --line:#DCE2DA;
+  --accent:#4E6A45; --accent-ink:#FFFFFF; --hot:#E5392B; --warn-bg:#FFF4DB; --warn-ink:#6B4B00;
+  --field:#F7F9F6;
+  --f-display:"Archivo Black", "Arial Black", Impact, sans-serif;
+  --f-body:"Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#101411; --panel:#171D18; --ink:#E8EEE6; --muted:#9AA79B; --line:#2A332B;
+  --accent:#8DB27F; --accent-ink:#0E140D; --hot:#FF6B5E; --warn-bg:#2B2410; --warn-ink:#F2D58B; --field:#1C231D; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101411; --panel:#171D18; --ink:#E8EEE6; --muted:#9AA79B; --line:#2A332B;
+  --accent:#8DB27F; --accent-ink:#0E140D; --hot:#FF6B5E; --warn-bg:#2B2410; --warn-ink:#F2D58B; --field:#1C231D; color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45}
+.wrap{max-width:1400px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bottom:16px}
+h1{font-family:var(--f-display);font-size:28px;letter-spacing:-.01em;margin:0;text-wrap:balance}
+h1 span{color:var(--hot)}
+.sub{color:var(--muted);margin:0}
+.mode{margin-left:auto;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:4px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.banner{background:var(--warn-bg);color:var(--warn-ink);border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:14px}
+.grid{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+h2{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0}
+label{font-size:13px;font-weight:600;display:flex;flex-direction:column;gap:4px;min-width:0}
+input[type=text],input[type=password],textarea,select{font:inherit;color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;box-sizing:border-box;min-width:0}
+textarea{resize:vertical}
+input:focus-visible,textarea:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hint{font-size:12px;color:var(--muted);margin:0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{font:inherit;font-weight:700;font-size:14px;border-radius:8px;border:1px solid var(--line);background:var(--field);color:var(--ink);padding:8px 12px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.seg button{padding:8px 6px;font-size:13px}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.dish{display:grid;grid-template-columns:28px 64px minmax(0,1fr);gap:8px;align-items:start;padding-block:8px;border-top:1px solid var(--line)}
+.dish:first-of-type{border-top:0}
+.num{font-family:var(--f-display);font-size:20px;line-height:1;padding-top:6px;color:var(--hot)}
+.thumb{width:64px;height:96px;border-radius:8px;background:var(--field) center/cover no-repeat;border:1px solid var(--line);position:relative;overflow:hidden}
+.thumb.busy::after{content:"…";position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.45);color:#fff;font-weight:800}
+.dfields{display:grid;grid-template-columns:1fr 1fr;gap:6px;min-width:0}
+.dfields .full{grid-column:1/-1}
+.dfields input{padding:6px 8px;font-size:13px}
+.dbtns{display:flex;gap:6px;grid-column:1/-1}
+.dbtns button{font-size:12px;padding:5px 8px}
+.fridge{display:flex;gap:10px;align-items:center}
+.fridge .thumb{width:72px;height:108px}
+.status{font-size:13px;color:var(--muted);min-height:1.2em;margin:0}
+.status.err{color:var(--hot)}
+.pv-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:600px){.strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+figure{margin:0;display:flex;flex-direction:column;gap:6px;min-width:0}
+figure canvas{width:100%;height:auto;border-radius:10px;background:#000;display:block}
+figcaption{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.copyrow{display:flex;gap:8px;align-items:flex-start}
+.copyrow textarea{flex:1}
+.tag{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--hot)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Fridge Carousel <span>Studio</span></h1>
+    <p class="sub">Fridge photo + hook + 6 Platter dinners → 8 slides for TikTok and Instagram.</p>
+    <span class="mode" id="mode">Local</span>
+  </header>
+  <div class="banner" id="banner" hidden>AI images can't be generated inside this Claude page, because it blocks calls to OpenAI. Open the local copy of this file in Chrome to generate images, or upload dish photos here with the Upload buttons.</div>
+
+  <div class="grid">
+    <div class="col">
+      <section>
+        <h2>Account</h2>
+        <div class="seg" id="acctSeg"></div>
+      </section>
+
+      <section>
+        <h2>Hook</h2>
+        <div class="row">
+          <select id="hookSel" aria-label="Hook from bank" style="flex:1"></select>
+          <button id="shuffle" type="button">Shuffle</button>
+        </div>
+        <label>Slide 1 text
+          <textarea id="hook" rows="3"></textarea>
+        </label>
+        <label>Vote slide text
+          <input type="text" id="vote">
+        </label>
+        <p class="hint">Wrap a word in *stars* to color it. Hooks you export are marked used and skipped by Shuffle for 30 days.</p>
+      </section>
+
+      <section>
+        <h2>Fridge photo</h2>
+        <div class="fridge">
+          <div class="thumb" id="fridgeThumb"></div>
+          <div class="col" style="gap:6px">
+            <input type="file" id="fridgeFile" accept="image/*" aria-label="Fridge photo">
+            <p class="hint">Flash on, low angle, door open. Phone photos work best.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Six dinners</h2>
+        <label>Paste from Platter (one per line: name | uses | time | cost)
+          <textarea id="paste" rows="3" placeholder="Spinach feta omelette | eggs, spinach, feta | 10 min | $2"></textarea>
+        </label>
+        <div class="row"><button type="button" id="fill">Fill rows</button><span class="tag" id="exampleTag">Example dishes shown</span></div>
+        <div id="dishes"></div>
+      </section>
+
+      <section>
+        <h2>AI images</h2>
+        <label>OpenAI API key
+          <input type="password" id="key" placeholder="sk-..." autocomplete="off">
+        </label>
+        <div class="row">
+          <label style="flex:1">Model<input type="text" id="model" value="gpt-image-1"></label>
+          <label style="flex:1">Quality
+            <select id="quality"><option value="low">Low (cheapest)</option><option value="medium" selected>Medium</option><option value="high">High</option></select>
+          </label>
+        </div>
+        <label>Photo style
+          <textarea id="style" rows="2">Realistic phone photo of a homemade dish on a plain plate, home kitchen counter, warm natural window light, slightly messy, 45-degree angle. No text, no people, no hands.</textarea>
+        </label>
+        <div class="row"><button class="primary" type="button" id="genAll">Generate missing images</button><button type="button" id="genAllForce">Regenerate all</button></div>
+        <p class="status" id="genStatus"></p>
+        <p class="hint">The key is saved only in this browser. Each image costs a few cents on Medium.</p>
+      </section>
+
+      <section>
+        <h2>Brand</h2>
+        <label>Logo for the last slide (Tomato Tot, optional)
+          <input type="file" id="logoFile" accept="image/*">
+        </label>
+      </section>
+    </div>
+
+    <div class="col">
+      <section>
+        <div class="pv-head">
+          <h2>Preview</h2>
+          <div class="seg" style="grid-template-columns:repeat(2,auto)" id="fmtSeg">
+            <button type="button" data-fmt="tt" aria-pressed="true">TikTok 9:16</button>
+            <button type="button" data-fmt="ig" aria-pressed="false">Instagram 4:5</button>
+          </div>
+        </div>
+        <div class="strip" id="strip"></div>
+      </section>
+
+      <section>
+        <h2>Export</h2>
+        <div class="copyrow"><label style="flex:1">Caption<textarea id="caption" rows="3"></textarea></label><button type="button" data-copy="caption" style="margin-top:20px">Copy</button></div>
+        <div class="copyrow"><label style="flex:1">Pinned comment<textarea id="pinned" rows="2"></textarea></label><button type="button" data-copy="pinned" style="margin-top:20px">Copy</button></div>
+        <div class="row">
+          <button class="primary" type="button" id="exportZip">Download zip (both sizes)</button>
+          <button type="button" id="exportCur">Download current size</button>
+        </div>
+        <p class="status" id="expStatus"></p>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem('fcs_'+k); return v==null? d : JSON.parse(v);}catch(e){return d;} },
+  set(k, v){ try{ localStorage.setItem('fcs_'+k, JSON.stringify(v)); }catch(e){} }
+};
+
+const ACCOUNTS = {
+  fridge_drama: { label:'Fridge drama', accent:'#FF3B30', badgeInk:'#FFFFFF', voteBg:'#111111', voteInk:'#FFFFFF',
+    tags:'#roommates #fridge #dinnerideas #cooking #fyp',
+    hooks:[
+      ["My roommate ate my food. So I cooked a 3-course dinner from *his* shelf","Which one do I eat in front of him? 👇"],
+      ["He labeled every item *DON'T TOUCH*. Here are 6 dinners I'm touching","Which one am I touching first? 👇"],
+      ["Roommate said my app was *useless*. Here's what it made from his fridge","Pick the one that hurts him most 👇"],
+      ["He ate my leftovers for 3 weeks. Tonight I'm *invoicing* him in dinners","Which one goes on his bill? 👇"],
+      ["Roommate went home for the weekend and left *this* fridge. Bad decision","Which one do I make first? 👇"],
+      ["My boyfriend said there's *nothing to eat*. An app found 6 dinners","Which one do I send him a picture of? 👇"],
+      ["She said she's not hungry, then ate half my plate. Tonight I cook from *her* side","Which one do I send her a picture of? 👇"],
+      ["He's been ordering DoorDash for *9 days* with this in the fridge","Which one should he have made? 👇"],
+      ["The guy who sublet my room left *this*. Cooking it anyway","Which one am I making tonight? 👇"],
+      ["Found my ex's groceries still in my fridge. *Not wasting them*","Which one do I make first? 👇"]
+    ]},
+  broke_student: { label:'Broke student', accent:'#FFD60A', badgeInk:'#14213D', voteBg:'#14213D', voteInk:'#FFFFFF',
+    tags:'#collegecooking #brokestudent #dinnerideas #budgetmeals #fyp',
+    hooks:[
+      ["My mom said I'd *starve* in college. Mom, look at this","Which one proves my mom wrong? 👇"],
+      ["My dad says 'we have food at home.' I checked. *He's right*","Which one would you make? 👇"],
+      ["My little brother ate the last of everything and left me *this*","Which one do I make? 👇"],
+      ["$11 until Friday. This is *everything I own*","Which one gets me to Friday? 👇"],
+      ["I haven't gone grocery shopping in *23 days*. Day 23 fridge:","Which one am I making tonight? 👇"],
+      ["Moving-out fridge. Every item left behind. *No grocery run allowed*","Which one do I make? 👇"],
+      ["Party ended at 4am. This is *what survived*","Which one is the hangover meal? 👇"]
+    ]},
+  platter_brand: { label:'Platter', accent:'#637858', badgeInk:'#F5ECDD', voteBg:'#F5ECDD', voteInk:'#1E2A1A',
+    tags:'#platter #dinnerideas #fridgecleanout #nofoodwaste #cooking',
+    hooks:[
+      ["I let an app decide dinner from my *sad fridge*","Which one am I making tonight? Comment the number 👇"],
+      ["POV: you have ketchup, 2 eggs and *a dream*","Which one would you make? 👇"],
+      ["I threw away $60 of food last month. *Never again.*","Which one am I making tonight? 👇"],
+      ["Rich fridge vs broke fridge. *Same app.*","Which one would you make? 👇"]
+    ]}
+};
+
+const EXAMPLE = [
+  ["Spinach feta omelette","eggs, spinach, feta","10 min","$2"],
+  ["Crispy fried rice","leftover rice, eggs, soy sauce","15 min","$2"],
+  ["Garlic butter pasta","pasta, garlic, parmesan","15 min","$3"],
+  ["Chicken quesadilla","tortillas, chicken, cheddar","12 min","$4"],
+  ["Tomato egg stir-fry","eggs, tomatoes, scallions","10 min","$2"],
+  ["Loaded baked potato","potatoes, cheddar, sour cream","40 min","$3"]
+];
+
+const state = {
+  acct: store.get('acct','fridge_drama'),
+  fmt: 'tt',
+  fridge: null, logo: null,
+  dishes: EXAMPLE.map(d => ({name:d[0], uses:d[1], time:d[2], cost:d[3], img:null})),
+  isExample: true
+};
+if(!ACCOUNTS[state.acct]) state.acct = 'fridge_drama';
+
+const inClaude = typeof window.claude !== 'undefined';
+if(inClaude){ $('mode').textContent = 'In Claude'; $('banner').hidden = false; }
+
+/* ---------- hooks ---------- */
+const used = () => store.get('used', {});
+function hookId(a, i){ return a+':'+i; }
+function isUsed(a, i){ const u = used()[hookId(a,i)]; return u && (Date.now()-u) < 30*864e5; }
+function fillHookSelect(){
+  const sel = $('hookSel'); sel.innerHTML = '';
+  ACCOUNTS[state.acct].hooks.forEach((h, i) => {
+    const o = document.createElement('option'); o.value = i;
+    o.textContent = (isUsed(state.acct,i)?'✓ ':'') + h[0].replace(/\*/g,'');
+    sel.appendChild(o);
+  });
+}
+function pickHook(i){
+  const h = ACCOUNTS[state.acct].hooks[i]; if(!h) return;
+  $('hookSel').value = i; $('hook').value = h[0]; $('vote').value = h[1];
+  updateCopy(); render();
+}
+function shuffle(){
+  const hs = ACCOUNTS[state.acct].hooks;
+  let pool = hs.map((_,i)=>i).filter(i => !isUsed(state.acct,i));
+  if(!pool.length) pool = hs.map((_,i)=>i);
+  const cur = +$('hookSel').value;
+  if(pool.length > 1) pool = pool.filter(i => i !== cur);
+  pickHook(pool[Math.floor(Math.random()*pool.length)]);
+}
+
+/* ---------- account seg ---------- */
+function buildAcctSeg(){
+  const seg = $('acctSeg'); seg.innerHTML = '';
+  Object.entries(ACCOUNTS).forEach(([k, a]) => {
+    const b = document.createElement('button'); b.type='button'; b.textContent = a.label;
+    b.setAttribute('aria-pressed', k===state.acct);
+    b.onclick = () => { state.acct = k; store.set('acct', k); buildAcctSeg(); fillHookSelect(); shuffle(); };
+    seg.appendChild(b);
+  });
+}
+
+/* ---------- dishes UI ---------- */
+function buildDishes(){
+  const box = $('dishes'); box.innerHTML = '';
+  state.dishes.forEach((d, i) => {
+    const row = document.createElement('div'); row.className = 'dish';
+    row.innerHTML = `
+      <div class="num">${i+1}</div>
+      <div class="thumb" id="th${i}"></div>
+      <div class="dfields">
+        <input class="full" type="text" id="dn${i}" aria-label="Dish ${i+1} name" placeholder="Dish name">
+        <input class="full" type="text" id="du${i}" aria-label="Dish ${i+1} ingredients used" placeholder="uses: eggs, spinach, feta">
+        <input type="text" id="dt${i}" aria-label="Dish ${i+1} time" placeholder="10 min">
+        <input type="text" id="dc${i}" aria-label="Dish ${i+1} cost" placeholder="$2">
+        <div class="dbtns">
+          <button type="button" data-gen="${i}">Generate</button>
+          <button type="button" data-up="${i}">Upload</button>
+          <input type="file" accept="image/*" id="df${i}" hidden>
+        </div>
+      </div>`;
+    box.appendChild(row);
+    $('dn'+i).value = d.name; $('du'+i).value = d.uses; $('dt'+i).value = d.time; $('dc'+i).value = d.cost;
+    ['dn','du','dt','dc'].forEach(p => $(p+i).addEventListener('input', () => {
+      d.name = $('dn'+i).value; d.uses = $('du'+i).value; d.time = $('dt'+i).value; d.cost = $('dc'+i).value;
+      markReal(); renderSoon();
+    }));
+    $('df'+i).addEventListener('change', async e => {
+      const f = e.target.files[0]; if(!f) return;
+      d.img = await loadImg(await fileToDataURL(f)); setThumb(i); render();
+    });
+    setThumb(i);
+  });
+  box.querySelectorAll('[data-up]').forEach(b => b.onclick = () => $('df'+b.dataset.up).click());
+  box.querySelectorAll('[data-gen]').forEach(b => b.onclick = () => genOne(+b.dataset.gen).then(render));
+}
+function setThumb(i){ const t = $('th'+i); const d = state.dishes[i]; t.style.backgroundImage = d.img ? `url("${d.img.src}")` : ''; }
+function markReal(){ if(state.isExample){ state.isExample = false; $('exampleTag').hidden = true; } }
+
+$('fill').onclick = () => {
+  const lines = $('paste').value.split('\n').map(l => l.trim()).filter(Boolean).slice(0,6);
+  if(!lines.length) return;
+  lines.forEach((l, i) => {
+    const p = l.split('|').map(s => s.trim());
+    const d = state.dishes[i];
+    d.name = p[0]||''; d.uses = (p[1]||'').replace(/^uses:\s*/i,''); d.time = p[2]||''; d.cost = p[3]||''; d.img = null;
+  });
+  markReal(); buildDishes(); render();
+};
+
+/* ---------- files ---------- */
+function fileToDataURL(f){ return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); }); }
+function loadImg(src){ return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; }); }
+$('fridgeFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if(!f) return;
+  state.fridge = await loadImg(await fileToDataURL(f));
+  $('fridgeThumb').style.backgroundImage = `url("${state.fridge.src}")`; render();
+});
+$('logoFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if(!f) return;
+  state.logo = await loadImg(await fileToDataURL(f)); render();
+});
+
+/* ---------- AI generation ---------- */
+$('key').value = store.get('key',''); $('model').value = store.get('model','gpt-image-1'); $('quality').value = store.get('quality','medium');
+const savedStyle = store.get('style', null); if(savedStyle) $('style').value = savedStyle;
+['key','model','quality','style'].forEach(k => $(k).addEventListener('change', () => store.set(k, $(k).value)));
+
+function setStatus(el, msg, err){ el.textContent = msg; el.classList.toggle('err', !!err); }
+async function genOne(i){
+  const d = state.dishes[i]; const key = $('key').value.trim();
+  if(!key){ setStatus($('genStatus'), 'Add your OpenAI API key first.', true); return; }
+  if(!d.name){ setStatus($('genStatus'), `Dish ${i+1} needs a name.`, true); return; }
+  const th = $('th'+i); th.classList.add('busy');
+  const prompt = `${d.name}${d.uses?`, made with ${d.uses}`:''}. ${$('style').value}`;
+  try{
+    const r = await fetch('https://api.openai.com/v1/images/generations', {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},
+      body: JSON.stringify({ model: $('model').value.trim() || 'gpt-image-1', prompt, size:'1024x1536', quality: $('quality').value, n:1 })
+    });
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok) throw new Error(j.error?.message || ('OpenAI returned '+r.status));
+    const item = j.data && j.data[0];
+    const src = item?.b64_json ? 'data:image/png;base64,'+item.b64_json : item?.url;
+    if(!src) throw new Error('No image came back.');
+    d.img = await loadImg(src); setThumb(i);
+    setStatus($('genStatus'), `Dish ${i+1} done.`);
+  }catch(e){
+    const blocked = e instanceof TypeError;
+    setStatus($('genStatus'), blocked
+      ? (inClaude ? 'This Claude page blocks OpenAI. Open the local file copy in Chrome to generate images.' : 'Could not reach OpenAI. Check your connection.')
+      : `Dish ${i+1}: ${e.message}`, true);
+    throw e;
+  }finally{ th.classList.remove('busy'); }
+}
+async function genMany(force){
+  const idx = state.dishes.map((d,i)=>i).filter(i => force || !state.dishes[i].img);
+  if(!idx.length){ setStatus($('genStatus'), 'All six already have images.'); return; }
+  $('genAll').disabled = $('genAllForce').disabled = true;
+  setStatus($('genStatus'), `Generating ${idx.length} image${idx.length>1?'s':''}… about 30–60 seconds.`);
+  let ok = 0, queue = idx.slice();
+  const worker = async () => { while(queue.length){ const i = queue.shift(); try{ await genOne(i); ok++; render(); }catch(e){ if(e instanceof TypeError){ queue = []; } } } };
+  await Promise.all([worker(), worker(), worker()]);
+  $('genAll').disabled = $('genAllForce').disabled = false;
+  if(ok === idx.length) setStatus($('genStatus'), `Generated ${ok} image${ok>1?'s':''}.`);
+}
+$('genAll').onclick = () => genMany(false);
+$('genAllForce').onclick = () => genMany(true);
+
+/* ---------- canvas drawing ---------- */
+const FMT = { tt:{W:1080,H:1920,top:250,bottom:1490,scale:1}, ig:{W:1080,H:1350,top:90,bottom:1250,scale:.86} };
+function cover(ctx, img, x, y, w, h){
+  const r = Math.max(w/img.width, h/img.height), iw = img.width*r, ih = img.height*r;
+  ctx.drawImage(img, x+(w-iw)/2, y+(h-ih)/2, iw, ih);
+}
+function parseWords(t){
+  const out = []; let hl = false;
+  t.split(/(\*)/).forEach(part => { if(part === '*'){ hl = !hl; return; } part.split(/\s+/).filter(Boolean).forEach(w => out.push({t:w, hl})); });
+  return out;
+}
+function wrap(ctx, words, maxW){
+  const lines = []; let line = [], w = 0; const sp = ctx.measureText(' ').width;
+  words.forEach(word => {
+    const ww = ctx.measureText(word.t).width;
+    if(line.length && w + sp + ww > maxW){ lines.push(line); line = []; w = 0; }
+    w += (line.length ? sp : 0) + ww; line.push(word);
+  });
+  if(line.length) lines.push(line);
+  return lines;
+}
+function lineWidth(ctx, line){ const sp = ctx.measureText(' ').width; return line.reduce((s,w,i)=> s + ctx.measureText(w.t).width + (i?sp:0), 0); }
+function drawLines(ctx, lines, cx, y, lh, opts){
+  const sp = ctx.measureText(' ').width;
+  lines.forEach((line, li) => {
+    let x = cx - lineWidth(ctx, line)/2; const yy = y + li*lh;
+    line.forEach(w => {
+      if(opts.stroke){ ctx.lineWidth = opts.stroke; ctx.strokeStyle = '#000'; ctx.lineJoin = 'round'; ctx.strokeText(w.t, x, yy); }
+      ctx.fillStyle = w.hl ? opts.hl : opts.fill; ctx.fillText(w.t, x, yy);
+      x += ctx.measureText(w.t).width + sp;
+    });
+  });
+}
+function fitText(ctx, words, family, start, min, maxW, maxLines){
+  let size = start, lines;
+  do { ctx.font = `${size}px ${family}`; lines = wrap(ctx, words, maxW); size -= 4; } while(lines.length > maxLines && size >= min);
+  return { lines, size: size+4 };
+}
+function fridgePlaceholder(ctx, W, H){
+  const g = ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#3A4148'); g.addColorStop(1,'#1B1F23');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = 'rgba(255,255,240,.10)';
+  [.28,.5,.72].forEach(p => ctx.fillRect(60, H*p, W-120, 10));
+  const items = [['#E8C547',140,.28,120,160],['#C94C3C',420,.28,90,110],['#F2F2EE',700,.5,160,90],['#6E9A4F',260,.5,110,70],['#D98C3B',560,.72,140,120],['#EDE6D3',820,.72,90,170]];
+  items.forEach(([c,x,p,w,h]) => { ctx.fillStyle = c; ctx.beginPath(); ctx.roundRect(x, H*p - h, w, h, 18); ctx.fill(); });
+  ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.font = `600 34px Figtree, sans-serif`; ctx.textAlign = 'center';
+  ctx.fillText('Upload your fridge photo', W/2, H*.88); ctx.textAlign = 'left';
+}
+function dishPlaceholder(ctx, x, y, w, h, i, name){
+  const hues = [18, 38, 140, 8, 200, 28];
+  const g = ctx.createLinearGradient(x, y, x+w, y+h);
+  g.addColorStop(0, `hsl(${hues[i%6]} 45% 38%)`); g.addColorStop(1, `hsl(${hues[i%6]+20} 40% 18%)`);
+  ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  const r = Math.min(w,h)*.3, cx = x+w/2, cy = y+h*.4;
+  ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = `hsl(${hues[i%6]} 55% 55%)`; ctx.beginPath(); ctx.arc(cx, cy, r*.62, 0, Math.PI*2); ctx.fill();
+}
+function drawSlide(ctx, n, f){
+  const {W,H,top,bottom,scale:s} = FMT[f]; const A = ACCOUNTS[state.acct];
+  ctx.clearRect(0,0,W,H); ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  if(n === 0){
+    if(state.fridge) cover(ctx, state.fridge, 0, 0, W, H); else fridgePlaceholder(ctx, W, H);
+    ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.fillRect(0,0,W,H);
+    const fam = '"Archivo Black", "Arial Black", Impact, sans-serif';
+    const { lines, size } = fitText(ctx, parseWords($('hook').value || 'Your hook here'), fam, Math.round(100*s), 48, W-150, 6);
+    ctx.font = `${size}px ${fam}`; const lh = size*1.18;
+    const blockH = lh*(lines.length-1) + size;
+    const y0 = top + (bottom-top)*.40 - blockH/2 + size;
+    drawLines(ctx, lines, W/2, y0, lh, { fill:'#FFFFFF', hl:A.accent, stroke: size*.2 });
+    ctx.font = `700 ${Math.round(34*s)}px Figtree, sans-serif`;
+    const t = 'swipe →', tw = ctx.measureText(t).width, ph = 64*s;
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.roundRect(W/2 - tw/2 - 28, bottom - ph, tw+56, ph, ph/2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText(t, W/2, bottom - ph/2 + 12*s); ctx.textAlign = 'left';
+    return;
+  }
+  if(n >= 1 && n <= 6){
+    const i = n-1, d = state.dishes[i];
+    if(d.img) cover(ctx, d.img, 0, 0, W, H); else dishPlaceholder(ctx, 0, 0, W, H, i, d.name);
+    const g = ctx.createLinearGradient(0, H*.42, 0, H); g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(.55,'rgba(0,0,0,.6)'); g.addColorStop(1,'rgba(0,0,0,.88)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const r = 70*s, bx = 80 + r, by = top + r;
+    ctx.fillStyle = A.accent; ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = A.badgeInk; ctx.font = `${Math.round(88*s)}px "Archivo Black", Impact, sans-serif`; ctx.textAlign = 'center';
+    ctx.fillText(String(n), bx, by + 31*s); ctx.textAlign = 'left';
+    const X = 80, maxW = W - 160; let y = bottom;
+    const meta = [d.time, d.cost].filter(Boolean).join('  ·  ');
+    if(meta){
+      ctx.font = `700 ${Math.round(40*s)}px Figtree, sans-serif`;
+      const mw = ctx.measureText(meta).width, ph = 66*s;
+      ctx.fillStyle = A.accent; ctx.beginPath(); ctx.roundRect(X, y - ph, mw + 52, ph, ph/2); ctx.fill();
+      ctx.fillStyle = A.badgeInk; ctx.fillText(meta, X + 26, y - ph/2 + 14*s);
+      y -= ph + 26*s;
+    }
+    if(d.uses){
+      ctx.font = `600 ${Math.round(44*s)}px Figtree, sans-serif`;
+      const ul = wrap(ctx, parseWords('uses: ' + d.uses), maxW).slice(0,3); const lh = 56*s;
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      ul.slice().reverse().forEach((line, k) => ctx.fillText(line.map(w=>w.t).join(' '), X, y - k*lh));
+      y -= ul.length*lh + 6*s;
+    }
+    const fam = '"Archivo Black", "Arial Black", Impact, sans-serif';
+    const { lines, size } = fitText(ctx, parseWords(d.name || 'Dish name'), fam, Math.round(80*s), 44, maxW, 3);
+    ctx.font = `${size}px ${fam}`; const lh = size*1.12; ctx.fillStyle = '#fff';
+    ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 12;
+    lines.slice().reverse().forEach((line, k) => ctx.fillText(line.map(w=>w.t).join(' '), X, y - k*lh));
+    ctx.shadowBlur = 0;
+    return;
+  }
+  // vote slide
+  ctx.fillStyle = A.voteBg; ctx.fillRect(0,0,W,H);
+  const fam = '"Archivo Black", "Arial Black", Impact, sans-serif';
+  const { lines, size } = fitText(ctx, parseWords($('vote').value || 'Which one? 👇'), fam, Math.round(76*s), 40, W-160, 3);
+  ctx.font = `${size}px ${fam}`; const lh = size*1.15;
+  drawLines(ctx, lines, W/2, top + size, lh, { fill:A.voteInk, hl:A.accent });
+  const textBottom = top + size + lh*(lines.length-1) + 50*s;
+  const footH = 120*s, footTop = bottom - footH;
+  const gap = 22*s, gx = 80, gw = W - 160, cols = 2, rows = 3;
+  const gh = footTop - 40*s - textBottom;
+  const cw = (gw - gap)/cols, ch = (gh - gap*(rows-1))/rows;
+  state.dishes.forEach((d, i) => {
+    const cx = gx + (i%cols)*(cw+gap), cy = textBottom + Math.floor(i/cols)*(ch+gap);
+    ctx.save(); ctx.beginPath(); ctx.roundRect(cx, cy, cw, ch, 26*s); ctx.clip();
+    if(d.img) cover(ctx, d.img, cx, cy, cw, ch); else dishPlaceholder(ctx, cx, cy, cw, ch, i, d.name);
+    ctx.restore();
+    const r = 36*s; ctx.fillStyle = A.accent; ctx.beginPath(); ctx.arc(cx + r + 14, cy + r + 14, r, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = A.badgeInk; ctx.font = `${Math.round(42*s)}px ${fam}`; ctx.textAlign = 'center';
+    ctx.fillText(String(i+1), cx + r + 14, cy + r + 14 + 15*s); ctx.textAlign = 'left';
+  });
+  ctx.font = `${Math.round(64*s)}px "DM Serif Display", Georgia, serif`;
+  const word = 'Platter', ww = ctx.measureText(word).width;
+  const lw = state.logo ? footH * (state.logo.width/state.logo.height) : 0;
+  const total = lw + (lw ? 20 : 0) + ww; let fx = W/2 - total/2;
+  if(state.logo){ ctx.drawImage(state.logo, fx, footTop, lw, footH); fx += lw + 20; }
+  ctx.fillStyle = A.voteInk; ctx.fillText(word, fx, footTop + footH/2 + 22*s);
+}
+
+/* ---------- preview ---------- */
+const LABELS = ['Hook','Dinner 1','Dinner 2','Dinner 3','Dinner 4','Dinner 5','Dinner 6','Vote'];
+const canvases = [];
+LABELS.forEach((l, n) => {
+  const fig = document.createElement('figure');
+  const c = document.createElement('canvas'); c.setAttribute('aria-label', `Slide ${n+1}: ${l}`);
+  const cap = document.createElement('figcaption'); cap.textContent = `${n+1} · ${l}`;
+  fig.append(c, cap); $('strip').appendChild(fig); canvases.push(c);
+});
+function render(){
+  const {W,H} = FMT[state.fmt];
+  canvases.forEach((c, n) => { if(c.width !== W || c.height !== H){ c.width = W; c.height = H; } drawSlide(c.getContext('2d'), n, state.fmt); });
+}
+let t; function renderSoon(){ clearTimeout(t); t = setTimeout(render, 120); }
+$('hook').addEventListener('input', () => { updateCopy(); renderSoon(); });
+$('vote').addEventListener('input', renderSoon);
+$('hookSel').addEventListener('change', e => pickHook(+e.target.value));
+$('shuffle').onclick = shuffle;
+document.querySelectorAll('#fmtSeg button').forEach(b => b.onclick = () => {
+  state.fmt = b.dataset.fmt;
+  document.querySelectorAll('#fmtSeg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  render();
+});
+
+/* ---------- caption ---------- */
+function updateCopy(){
+  const A = ACCOUNTS[state.acct];
+  const hook = ($('hook').value || '').replace(/\*/g,'').trim();
+  $('caption').value = `${hook.toLowerCase().replace(/[.:]$/,'')} 👇 ${A.tags}`;
+  $('pinned').value = `app is Platter: Recipe Saver, free on the App Store`;
+}
+document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+  const ta = $(b.dataset.copy);
+  try{ await navigator.clipboard.writeText(ta.value); b.textContent = 'Copied'; }
+  catch(e){ ta.focus(); ta.select(); b.textContent = 'Selected'; }
+  setTimeout(() => b.textContent = 'Copy', 1500);
+});
+
+/* ---------- export ---------- */
+function slideBlob(n, f){
+  const {W,H} = FMT[f]; const c = document.createElement('canvas'); c.width = W; c.height = H;
+  drawSlide(c.getContext('2d'), n, f);
+  return new Promise(res => c.toBlob(res, 'image/png'));
+}
+async function saveFile(name, blob){
+  if(inClaude){
+    const dl = await window.claude.use('downloads');
+    if(!dl) throw new Error('Downloads are not available in this view.');
+    return dl.save({ filename:name, data:blob });
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+async function exportZip(fmts){
+  const st = $('expStatus');
+  if(typeof JSZip === 'undefined'){ setStatus(st, 'Zip library did not load. Check your connection and reload.', true); return; }
+  setStatus(st, 'Building slides…');
+  try{
+    const zip = new JSZip(); const stamp = new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
+    const base = `${state.acct}_${stamp}`;
+    for(const f of fmts){
+      const folder = zip.folder(f === 'tt' ? 'tiktok_1080x1920' : 'instagram_1080x1350');
+      for(let n = 0; n < 8; n++) folder.file(`${String(n+1).padStart(2,'0')}_${LABELS[n].toLowerCase().replace(' ','_')}.png`, await slideBlob(n, f));
+    }
+    zip.file('caption.txt', $('caption').value);
+    zip.file('pinned_comment.txt', $('pinned').value);
+    const blob = await zip.generateAsync({ type:'blob' });
+    await saveFile(base + '.zip', blob);
+    const u = used(); const i = $('hookSel').value;
+    if(ACCOUNTS[state.acct].hooks[i] && $('hook').value === ACCOUNTS[state.acct].hooks[i][0]){ u[hookId(state.acct, i)] = Date.now(); store.set('used', u); fillHookSelect(); $('hookSel').value = i; }
+    setStatus(st, 'Downloaded ' + base + '.zip');
+  }catch(e){
+    setStatus(st, e && e.code === 'declined' ? 'Download cancelled.' : 'Export failed: ' + (e.message || e.code || e), true);
+  }
+}
+$('exportZip').onclick = () => exportZip(['tt','ig']);
+$('exportCur').onclick = () => exportZip([state.fmt]);
+
+/* ---------- boot ---------- */
+buildAcctSeg(); fillHookSelect(); buildDishes(); shuffle();
+render();
+if(document.fonts && document.fonts.load){
+  Promise.all(['100px "Archivo Black"','64px "DM Serif Display"','600 40px Figtree','700 40px Figtree'].map(f => document.fonts.load(f))).then(render, render);
+}
+})();
+</script>
